@@ -1,0 +1,8 @@
+# Mô hình dịch máy chạy cục bộ (Hugging Face).
+# Cài torch phù hợp với máy trước, ví dụ chỉ CPU:
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+torch>=2.1
+transformers>=4.40
+sentencepiece>=0.1.99
+sacremoses>=0.1.1
+protobuf>=3.20

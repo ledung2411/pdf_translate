@@ -1,0 +1,12 @@
+services:
+  pdf-translate:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/data   # cache mô hình + bản dịch
+    environment:
+      PDFTR_DEFAULT_ENGINE: vinai
+      # Dùng LLM qua Ollama chạy trên máy chủ:
+      # PDFTR_LLM_BASE_URL: http://host.docker.internal:11434/v1
+      # PDFTR_LLM_MODEL: qwen2.5:7b

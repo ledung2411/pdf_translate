@@ -1,0 +1,117 @@
+"""Hàng đợi công việc dịch chạy nền (một worker để không tranh tài nguyên mô hình)."""
+
+from __future__ import annotations
+
+import logging
+import queue
+import shutil
+import threading
+import time
+import traceback
+import uuid
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+
+from .config import settings
+from .pdf_processor import PdfError, TranslateOptions, translate_pdf
+from .translators import TranslatorError
+
+log = logging.getLogger(__name__)
+
+
+@dataclass
+class Job:
+    id: str
+    filename: str
+    options: TranslateOptions
+    status: str = "queued"  # queued | running | done | error
+    progress: float = 0.0
+    message: str = "Đang chờ trong hàng đợi..."
+    error: str | None = None
+    created: float = field(default_factory=time.time)
+    started: float | None = None
+    finished: float | None = None
+    outputs: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def dir(self) -> Path:
+        return settings.data_dir / "jobs" / self.id
+
+    @property
+    def input_path(self) -> Path:
+        return self.dir / "input.pdf"
+
+    def public(self) -> dict:
+        d = asdict(self)
+        d.pop("outputs")
+        d["options"] = {k: v for k, v in d["options"].items() if k != "custom_glossary"}
+        d["downloads"] = sorted(self.outputs)
+        if self.started:
+            d["elapsed"] = round((self.finished or time.time()) - self.started, 1)
+        return d
+
+
+class JobManager:
+    def __init__(self) -> None:
+        self.jobs: dict[str, Job] = {}
+        self._q: queue.Queue[str] = queue.Queue()
+        self._lock = threading.Lock()
+        self._worker: threading.Thread | None = None
+
+    def start(self) -> None:
+        if self._worker is None:
+            self._worker = threading.Thread(target=self._run, name="translate-worker", daemon=True)
+            self._worker.start()
+
+    def submit(self, filename: str, data: bytes, options: TranslateOptions) -> Job:
+        self._cleanup()
+        job = Job(id=uuid.uuid4().hex[:12], filename=filename, options=options)
+        job.dir.mkdir(parents=True, exist_ok=True)
+        job.input_path.write_bytes(data)
+        with self._lock:
+            self.jobs[job.id] = job
+        self._q.put(job.id)
+        self.start()
+        return job
+
+    def get(self, job_id: str) -> Job | None:
+        return self.jobs.get(job_id)
+
+    def queue_position(self, job: Job) -> int:
+        waiting = sorted((j for j in self.jobs.values() if j.status == "queued"), key=lambda j: j.created)
+        return next((i + 1 for i, j in enumerate(waiting) if j.id == job.id), 0)
+
+    def _run(self) -> None:
+        while True:
+            job_id = self._q.get()
+            job = self.jobs.get(job_id)
+            if job is None:
+                continue
+            job.status, job.started = "running", time.time()
+            job.message = "Đang chuẩn bị..."
+
+            def progress(frac: float, msg: str, job: Job = job) -> None:
+                job.progress, job.message = round(frac, 4), msg
+
+            try:
+                outputs = translate_pdf(job.input_path, job.dir, job.options, progress)
+                job.outputs = {k: str(v) for k, v in outputs.items()}
+                job.status, job.progress, job.message = "done", 1.0, "Hoàn tất"
+            except (PdfError, TranslatorError) as e:
+                job.status, job.error, job.message = "error", str(e), "Lỗi"
+            except Exception as e:  # noqa: BLE001
+                log.error("Job %s lỗi:\n%s", job.id, traceback.format_exc())
+                job.status, job.error, job.message = "error", f"Lỗi không mong muốn: {e}", "Lỗi"
+            finally:
+                job.finished = time.time()
+
+    def _cleanup(self) -> None:
+        cutoff = time.time() - settings.job_ttl_hours * 3600
+        with self._lock:
+            for jid, job in list(self.jobs.items()):
+                if job.status in ("done", "error") and (job.finished or job.created) < cutoff:
+                    shutil.rmtree(job.dir, ignore_errors=True)
+                    del self.jobs[jid]
+
+
+manager = JobManager()

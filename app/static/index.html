@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Dịch PDF khoa học Anh → Việt</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="top">
+    <div class="wrap">
+      <h1>Dịch PDF khoa học <span class="arrow">Anh → Việt</span></h1>
+      <p class="sub">Chạy hoàn toàn trên máy của bạn bằng mô hình mã nguồn mở — không dùng API trả phí, tài liệu không rời khỏi máy.</p>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <nav class="tabs" role="tablist">
+      <button class="tab active" data-tab="pdf" role="tab">Dịch file PDF</button>
+      <button class="tab" data-tab="text" role="tab">Dịch đoạn văn</button>
+      <button class="tab" data-tab="glossary" role="tab">Thuật ngữ</button>
+    </nav>
+
+    <!-- ============ DỊCH PDF ============ -->
+    <section id="tab-pdf" class="panel">
+      <form id="pdf-form" class="card">
+        <label id="drop" class="drop" for="file">
+          <input id="file" type="file" accept="application/pdf,.pdf" hidden />
+          <div class="drop-icon" aria-hidden="true">PDF</div>
+          <div class="drop-text">
+            <strong id="file-name">Kéo thả file PDF vào đây</strong>
+            <span id="file-hint">hoặc bấm để chọn file (bài báo, luận văn, sách giáo trình...)</span>
+          </div>
+        </label>
+
+        <div class="grid">
+          <label class="field">
+            <span>Mô hình dịch</span>
+            <select id="engine"></select>
+            <small id="engine-desc" class="muted"></small>
+          </label>
+          <div class="field">
+            <span>Phạm vi trang <small class="muted">(để trống = toàn bộ)</small></span>
+            <div class="row">
+              <input id="page-from" type="number" min="1" placeholder="Từ trang" />
+              <input id="page-to" type="number" min="1" placeholder="Đến trang" />
+            </div>
+          </div>
+        </div>
+
+        <div class="checks">
+          <label><input id="skip-refs" type="checkbox" checked /> <span>Giữ nguyên mục <em>Tài liệu tham khảo</em></span></label>
+          <label><input id="use-gloss" type="checkbox" checked /> Dùng bảng thuật ngữ khoa học</label>
+          <label><input id="bilingual" type="checkbox" checked /> Tạo thêm bản song ngữ (gốc | dịch)</label>
+        </div>
+
+        <button id="submit" class="btn primary" type="submit" disabled>Bắt đầu dịch</button>
+      </form>
+
+      <div id="job" class="card hidden">
+        <div class="job-head">
+          <div>
+            <div id="job-file" class="job-file"></div>
+            <div id="job-msg" class="muted"></div>
+          </div>
+          <div id="job-pct" class="job-pct">0%</div>
+        </div>
+        <div class="bar"><div id="job-bar"></div></div>
+        <div id="job-error" class="error hidden"></div>
+        <div id="downloads" class="downloads hidden">
+          <a id="dl-translated" class="btn primary" href="#">Tải PDF tiếng Việt</a>
+          <a id="dl-bilingual" class="btn" href="#">Tải PDF song ngữ</a>
+          <a id="dl-markdown" class="btn" href="#">Tải văn bản (.md)</a>
+        </div>
+      </div>
+
+      <div id="preview" class="card hidden">
+        <div class="preview-head">
+          <strong>Xem trước</strong>
+          <div class="seg">
+            <button class="seg-btn active" data-kind="translated">Bản dịch</button>
+            <button class="seg-btn" data-kind="bilingual">Song ngữ</button>
+          </div>
+        </div>
+        <iframe id="preview-frame" title="Xem trước PDF"></iframe>
+      </div>
+
+      <div class="card notes">
+        <h3>Công cụ xử lý tài liệu khoa học như thế nào?</h3>
+        <ul>
+          <li><b>Giữ bố cục:</b> bản dịch được đặt đúng vị trí đoạn văn gốc; hình ảnh, biểu đồ, bảng và công thức giữ nguyên.</li>
+          <li><b>Bảo vệ công thức &amp; ký hiệu:</b> công thức (font toán LaTeX), ký hiệu Hy Lạp, biểu thức như <code>p &lt; 0.05</code>, trích dẫn <code>[12]</code>, URL, DOI, mã nguồn… không bị dịch sai.</li>
+          <li><b>Thuật ngữ nhất quán:</b> gần 200 thuật ngữ chuyên ngành (Toán, Thống kê, AI, Vật lý, Y sinh…), có thể bổ sung thuật ngữ riêng.</li>
+          <li><b>Tiêu đề mục chuẩn:</b> Abstract → Tóm tắt, Introduction → Giới thiệu, Figure → Hình…</li>
+          <li>PDF dạng ảnh scan cần chạy OCR trước (ví dụ <code>ocrmypdf</code>).</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ============ DỊCH ĐOẠN VĂN ============ -->
+    <section id="tab-text" class="panel hidden">
+      <div class="card">
+        <div class="grid two">
+          <label class="field">
+            <span>Tiếng Anh</span>
+            <textarea id="src-text" rows="14" placeholder="Dán đoạn văn khoa học tiếng Anh vào đây..."></textarea>
+          </label>
+          <label class="field">
+            <span>Tiếng Việt</span>
+            <textarea id="dst-text" rows="14" readonly placeholder="Bản dịch sẽ hiện ở đây"></textarea>
+          </label>
+        </div>
+        <div class="row end">
+          <span id="text-status" class="muted"></span>
+          <button id="copy-text" class="btn" type="button">Sao chép</button>
+          <button id="translate-text" class="btn primary" type="button">Dịch</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ THUẬT NGỮ ============ -->
+    <section id="tab-glossary" class="panel hidden">
+      <div class="card">
+        <h3>Thuật ngữ của bạn</h3>
+        <p class="muted">Mỗi dòng một mục dạng <code>thuật ngữ tiếng Anh = bản dịch</code>. Ưu tiên hơn bảng mặc định, áp dụng cho cả dịch PDF và dịch đoạn văn. Được lưu trên trình duyệt này.</p>
+        <textarea id="custom-gloss" rows="10" placeholder="attention head = đầu chú ý&#10;knowledge distillation = chưng cất tri thức&#10;PyTorch = PyTorch"></textarea>
+      </div>
+      <div class="card">
+        <div class="row between">
+          <h3>Bảng thuật ngữ mặc định</h3>
+          <input id="gloss-search" type="search" placeholder="Tìm thuật ngữ..." />
+        </div>
+        <div class="table-wrap">
+          <table id="gloss-table"><thead><tr><th>Tiếng Anh</th><th>Tiếng Việt</th></tr></thead><tbody></tbody></table>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="wrap muted foot">Mô hình: VinAI Translate, OPUS-MT, NLLB-200 hoặc LLM tự host (Ollama). Mã nguồn mở, miễn phí.</footer>
+  <script src="app.js"></script>
+</body>
+</html>

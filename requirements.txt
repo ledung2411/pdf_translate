@@ -1,0 +1,6 @@
+# Lõi web + xử lý PDF
+pymupdf>=1.26
+pymupdf-fonts>=1.0.5
+fastapi>=0.110
+uvicorn[standard]>=0.27
+python-multipart>=0.0.9
