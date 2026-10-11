@@ -28,6 +28,10 @@ from .config import settings
 
 log = logging.getLogger(__name__)
 
+# Windows không hỗ trợ symlink nếu không bật Developer Mode: cache vẫn chạy được,
+# chỉ là cảnh báo gây rối — tắt đi.
+os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+
 
 class TranslatorError(RuntimeError):
     pass
@@ -146,7 +150,10 @@ class HFSeq2SeqTranslator(Translator):
         if not ok:
             raise TranslatorError(why)
         import torch
+        import transformers
         from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+
+        transformers.logging.set_verbosity_error()
 
         device = settings.device
         if device == "auto":
@@ -191,7 +198,9 @@ class HFSeq2SeqTranslator(Translator):
             tok, model = self._tokenizer, self._model
             gen_kwargs: dict = {
                 "num_beams": settings.num_beams,
-                "max_new_tokens": 512,
+                # Chỉ đặt max_length (generation_config của Marian cũng dùng max_length)
+                # để tránh cảnh báo "Both max_new_tokens and max_length".
+                "max_length": 512,
                 "early_stopping": True,
             }
             if self.tgt_lang:

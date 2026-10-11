@@ -69,6 +69,7 @@ def fake_hf(monkeypatch):
             return FakeModel()
 
     tf.AutoTokenizer, tf.AutoModelForSeq2SeqLM = AutoTokenizer, AutoModelForSeq2SeqLM
+    tf.logging = types.SimpleNamespace(set_verbosity_error=lambda: None)
     monkeypatch.setitem(sys.modules, "torch", torch)
     monkeypatch.setitem(sys.modules, "transformers", tf)
     monkeypatch.setitem(sys.modules, "sentencepiece", types.ModuleType("sentencepiece"))

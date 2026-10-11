@@ -1,7 +1,8 @@
 """Tự chẩn đoán môi trường khi dịch không chạy được.
 
     python -m app.doctor            # kiểm tra thư viện, GPU, mô hình
-    python -m app.doctor --try opus # thử dịch một câu thật bằng engine 'opus'
+    python -m app.doctor --try opus        # thử dịch vài câu khoa học bằng 'opus'
+    python -m app.doctor --try opus,vinai  # so sánh chất lượng & tốc độ 2 mô hình
 """
 
 from __future__ import annotations
@@ -13,6 +14,14 @@ import sys
 import time
 
 OK, BAD, WARN = "[OK]  ", "[LỖI]", "[!]   "
+
+SAMPLES = [
+    "Deep neural networks have achieved remarkable results in computer vision.",
+    "As shown in Fig. 3, the proposed method outperforms the baseline (p < 0.05) [12].",
+    "We fine-tune the pre-trained model with a learning rate of 3e-4 and a batch size of 32.",
+    "The catalyst exhibits high thermal stability and a narrow band gap of 2.1 eV.",
+    "Patients in the control group received a placebo for 12 weeks.",
+]
 
 
 def check_module(name: str, required: bool = True) -> bool:
@@ -27,7 +36,7 @@ def check_module(name: str, required: bool = True) -> bool:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--try", dest="engine", help="thử dịch 1 câu bằng engine này (vinai/opus/nllb/llm)")
+    ap.add_argument("--try", dest="engine", help="thử dịch vài câu bằng các engine này, cách nhau dấu phẩy (vd. opus,vinai)")
     args = ap.parse_args(argv)
 
     print(f"Python {sys.version.split()[0]} — {platform.platform()}")
@@ -67,20 +76,27 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.engine:
         from .pipeline import TextTranslator
+        from .scientific import Glossary, load_builtin_glossary
         from .translators import get_engine
 
-        print(f"\n# Thử dịch bằng '{args.engine}'")
-        try:
-            eng = get_engine(args.engine)
-            t0 = time.time()
-            eng.prepare(lambda m: print("   ", m))
-            out = TextTranslator(eng, None, use_cache=False).translate_texts(
-                ["Deep neural networks have achieved remarkable results in computer vision."]
-            )[0]
-            print(f"{OK} ({time.time() - t0:.1f}s) {out}")
-        except Exception as e:  # noqa: BLE001
-            good = False
-            print(f"{BAD} {e.__class__.__name__}: {e}")
+        glossary = Glossary(load_builtin_glossary())
+        for key in [k.strip() for k in args.engine.split(",") if k.strip()]:
+            print(f"\n# Thử dịch bằng '{key}' (có bảng thuật ngữ, giống khi dịch PDF)")
+            try:
+                eng = get_engine(key)
+                t0 = time.time()
+                eng.prepare(lambda m: print("   ", m))
+                print(f"    Nạp mô hình: {time.time() - t0:.1f}s")
+                tr = TextTranslator(eng, glossary, use_cache=False)
+                t1 = time.time()
+                outs = tr.translate_texts(SAMPLES)
+                per = (time.time() - t1) / len(SAMPLES)
+                for en, vi in zip(SAMPLES, outs):
+                    print(f"  EN: {en}\n  VI: {vi}\n")
+                print(f"{OK} Tốc độ: {per:.1f} giây/câu")
+            except Exception as e:  # noqa: BLE001
+                good = False
+                print(f"{BAD} {e.__class__.__name__}: {e}")
     return 0 if good else 1
 
 

@@ -141,6 +141,7 @@ learning rate = tốc độ học
 batch size = kích thước batch
 hyperparameter = siêu tham số
 fine-tuning = tinh chỉnh
+fine-tune = tinh chỉnh
 pre-training = tiền huấn luyện
 pre-trained model = mô hình tiền huấn luyện
 overfitting = quá khớp
@@ -187,6 +188,7 @@ transmission electron microscopy = kính hiển vi điện tử truyền qua
 density functional theory = lý thuyết phiếm hàm mật độ
 quantum mechanics = cơ học lượng tử
 heat transfer = truyền nhiệt
+thermal stability = độ bền nhiệt
 fluid dynamics = động lực học chất lưu
 signal-to-noise ratio = tỷ số tín hiệu trên nhiễu
 
