@@ -10,6 +10,7 @@ from __future__ import annotations
 import html
 import logging
 import re
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -31,7 +32,7 @@ from .scientific import (
     looks_mathy,
     parse_glossary,
 )
-from .translators import get_engine
+from .translators import TranslatorError, get_engine
 
 log = logging.getLogger(__name__)
 
@@ -44,7 +45,7 @@ class PdfError(RuntimeError):
 
 @dataclass
 class TranslateOptions:
-    engine: str = "vinai"
+    engine: str = "auto"
     page_from: int | None = None  # 1-based, bao gồm
     page_to: int | None = None
     skip_references: bool = True
@@ -541,6 +542,17 @@ def blocks_to_markdown(pages: list[list[TextBlock]], page_numbers: list[int]) ->
 # ---------------------------------------------------------------------------
 
 
+def _fmt_duration(sec: float) -> str:
+    sec = int(sec)
+    if sec < 60:
+        return f"{sec} giây"
+    m, s = divmod(sec, 60)
+    if m < 60:
+        return f"{m} phút {s} giây"
+    h, m = divmod(m, 60)
+    return f"{h} giờ {m} phút"
+
+
 def build_glossary(opts: TranslateOptions) -> Glossary | None:
     entries: dict[str, str] = {}
     if opts.use_glossary:
@@ -596,12 +608,21 @@ def translate_pdf(
 
     to_translate = [b for b in all_blocks if b.kind == "text"]
     engine = get_engine(opts.engine)
+    ok, why = engine.available()
+    if not ok:
+        raise TranslatorError(f"{engine.label}: {why}")
+    engine.prepare(lambda msg: report(0.02, msg))
     translator = TextTranslator(engine, build_glossary(opts))
     report(0.03, f"Đang dịch {len(to_translate)} đoạn văn bằng {engine.label}...")
+    t_start = time.time()
 
     def on_tr(done: int, total: int) -> None:
         frac = 0.03 + 0.85 * (done / total if total else 1)
-        report(frac, f"Đang dịch: {done}/{total} câu")
+        msg = f"Đang dịch: {done}/{total} câu"
+        if 0 < done < total:
+            remain = (time.time() - t_start) / done * (total - done)
+            msg += f" — còn khoảng {_fmt_duration(remain)}"
+        report(frac, msg)
 
     translations = translator.translate_texts([b.text for b in to_translate], on_tr)
     for b, t in zip(to_translate, translations):

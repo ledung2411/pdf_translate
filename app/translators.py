@@ -22,6 +22,7 @@ import urllib.error
 import urllib.request
 from abc import ABC, abstractmethod
 from pathlib import Path
+from typing import Callable
 
 from .config import settings
 
@@ -30,6 +31,20 @@ log = logging.getLogger(__name__)
 
 class TranslatorError(RuntimeError):
     pass
+
+
+StatusFn = Callable[[str], None]
+
+
+def _dir_size_mb(path: Path) -> float:
+    total = 0
+    for f in path.rglob("*"):
+        try:
+            if f.is_file():
+                total += f.stat().st_size
+        except OSError:
+            pass
+    return total / 1024 / 1024
 
 
 class Translator(ABC):
@@ -46,6 +61,9 @@ class Translator(ABC):
 
     def available(self) -> tuple[bool, str]:
         return True, ""
+
+    def prepare(self, status: StatusFn | None = None) -> None:
+        """Nạp mô hình trước khi dịch (có thể mất vài phút ở lần đầu)."""
 
     def cache_id(self) -> str:
         return self.key
@@ -83,14 +101,45 @@ class HFSeq2SeqTranslator(Translator):
         return f"{self.key}:{self.model_name}:b{settings.num_beams}"
 
     def available(self) -> tuple[bool, str]:
-        try:
-            import torch  # noqa: F401
-            import transformers  # noqa: F401
-        except ImportError:
-            return False, "Chưa cài torch/transformers (pip install -r requirements-ml.txt)"
+        missing = []
+        for mod in ("torch", "transformers", "sentencepiece"):
+            try:
+                __import__(mod)
+            except ImportError:
+                missing.append(mod)
+            except Exception as e:  # noqa: BLE001  (vd. lỗi DLL của torch trên Windows)
+                return False, f"Lỗi khi nạp {mod}: {e}"
+        if missing:
+            return False, f"Chưa cài {', '.join(missing)} (pip install -r requirements-ml.txt)"
         return True, ""
 
-    def _load(self) -> None:
+    def prepare(self, status: StatusFn | None = None) -> None:
+        with self._lock:
+            self._load(status)
+
+    def _watch_download(self, status: StatusFn | None) -> Callable[[], None]:
+        """Báo số MB đã tải trong lúc Hugging Face tải mô hình lần đầu."""
+        if status is None or Path(self.model_name).exists():
+            return lambda: None
+        try:
+            from huggingface_hub.constants import HF_HUB_CACHE
+        except ImportError:
+            return lambda: None
+        folder = Path(HF_HUB_CACHE) / ("models--" + self.model_name.replace("/", "--"))
+        stop = threading.Event()
+
+        def run() -> None:
+            last = -1.0
+            while not stop.wait(1.5):
+                mb = _dir_size_mb(folder) if folder.exists() else 0.0
+                if mb != last:
+                    status(f"Đang tải mô hình {self.model_name} (chỉ lần đầu): {mb:,.0f} MB...")
+                    last = mb
+
+        threading.Thread(target=run, daemon=True).start()
+        return stop.set
+
+    def _load(self, status: StatusFn | None = None) -> None:
         if self._model is not None:
             return
         ok, why = self.available()
@@ -108,9 +157,12 @@ class HFSeq2SeqTranslator(Translator):
             else:
                 device = "cpu"
         log.info("Đang nạp mô hình %s trên %s ...", self.model_name, device)
+        if status:
+            status(f"Đang nạp mô hình {self.model_name}...")
         kwargs = {}
         if self.src_lang:
             kwargs["src_lang"] = self.src_lang
+        stop_watch = self._watch_download(status)
         try:
             tok = AutoTokenizer.from_pretrained(self.model_name, **kwargs)
             model = AutoModelForSeq2SeqLM.from_pretrained(self.model_name)
@@ -119,11 +171,15 @@ class HFSeq2SeqTranslator(Translator):
                 f"Không nạp được mô hình {self.model_name}: {e}. "
                 "Lần chạy đầu cần Internet để tải mô hình (hoặc chạy scripts/download_models.py)."
             ) from e
+        finally:
+            stop_watch()
         if device == "cuda":
             model = model.half()
         model.to(device).eval()
         self._tokenizer, self._model, self._device = tok, model, device
         log.info("Đã nạp xong %s", self.model_name)
+        if status:
+            status(f"Đã nạp mô hình ({device.upper()})")
 
     def translate_batch(self, texts: list[str], glossary: dict[str, str] | None = None) -> list[str]:
         if not texts:
@@ -330,8 +386,27 @@ def _build_registry() -> None:
         _ENGINES[e.key] = e
 
 
+def default_engine_key() -> str:
+    if settings.default_engine != "auto":
+        return settings.default_engine
+    try:
+        import torch
+
+        return "vinai" if torch.cuda.is_available() else "opus"
+    except Exception:  # noqa: BLE001
+        # Chưa cài torch: dùng LLM cục bộ nếu đang chạy, nếu không vẫn trả về
+        # "opus" để thông báo lỗi hướng dẫn cài đặt.
+        _build_registry()
+        llm = _ENGINES.get("llm")
+        if llm is not None and llm.available()[0]:
+            return "llm"
+        return "opus"
+
+
 def get_engine(key: str) -> Translator:
     _build_registry()
+    if key in ("", "auto"):
+        key = default_engine_key()
     if key not in _ENGINES:
         raise TranslatorError(f"Engine không hợp lệ: {key}")
     return _ENGINES[key]

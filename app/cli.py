@@ -21,7 +21,7 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Dịch PDF khoa học Anh → Việt (chạy cục bộ).")
     ap.add_argument("pdf", type=Path, help="file PDF đầu vào")
     ap.add_argument("-o", "--out", type=Path, default=Path("output"), help="thư mục kết quả")
-    ap.add_argument("-e", "--engine", default="vinai", choices=keys)
+    ap.add_argument("-e", "--engine", default="auto", choices=["auto", *keys])
     ap.add_argument("--pages", help="khoảng trang, vd. 1-5")
     ap.add_argument("--translate-references", action="store_true", help="dịch cả mục Tài liệu tham khảo")
     ap.add_argument("--no-glossary", action="store_true", help="không dùng bảng thuật ngữ mặc định")

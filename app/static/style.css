@@ -100,7 +100,7 @@ select:focus, input:focus, textarea:focus { outline: 2px solid var(--accent); ou
 .bar { height: 8px; border-radius: 99px; background: var(--accent-soft); overflow: hidden; }
 #job-bar { height: 100%; width: 0; background: var(--accent); transition: width .4s; }
 .downloads { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
-.error { margin-top: 12px; padding: 10px 12px; border-radius: 8px; background: var(--error-soft); color: var(--error); }
+.error { white-space: pre-wrap; margin-top: 12px; padding: 10px 12px; border-radius: 8px; background: var(--error-soft); color: var(--error); }
 
 .preview-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; gap: 8px; }
 .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }

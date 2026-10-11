@@ -17,7 +17,8 @@ def _env_bool(name: str, default: bool) -> bool:
 @dataclass
 class Settings:
     data_dir: Path = field(default_factory=lambda: Path(os.environ.get("PDFTR_DATA_DIR", "data")).resolve())
-    default_engine: str = os.environ.get("PDFTR_DEFAULT_ENGINE", "vinai")
+    # "auto": có GPU dùng VinAI (chất lượng cao), chỉ có CPU dùng OPUS-MT (nhanh).
+    default_engine: str = os.environ.get("PDFTR_DEFAULT_ENGINE", "auto")
     device: str = os.environ.get("PDFTR_DEVICE", "auto")  # auto | cpu | cuda | mps
     batch_size: int = int(os.environ.get("PDFTR_BATCH_SIZE", "8"))
     num_beams: int = int(os.environ.get("PDFTR_NUM_BEAMS", "4"))

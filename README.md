@@ -24,11 +24,12 @@ lên dịch vụ bên ngoài.
 
 | Engine  | Mô hình | Ghi chú |
 |---------|---------|---------|
-| `vinai` (mặc định) | [vinai/vinai-translate-en2vi-v2](https://huggingface.co/vinai/vinai-translate-en2vi-v2) | Chất lượng Anh→Việt tốt nhất trong nhóm mô hình nhỏ; ~1,5 GB; nên có GPU nhưng CPU vẫn chạy được |
+| `vinai` | [vinai/vinai-translate-en2vi-v2](https://huggingface.co/vinai/vinai-translate-en2vi-v2) | Chất lượng Anh→Việt tốt nhất trong nhóm mô hình nhỏ; ~1,5 GB; nên có GPU nhưng CPU vẫn chạy được |
 | `opus`  | [Helsinki-NLP/opus-mt-en-vi](https://huggingface.co/Helsinki-NLP/opus-mt-en-vi) | Nhẹ (~300 MB), nhanh trên CPU, chất lượng khá |
 | `nllb`  | [facebook/nllb-200-distilled-600M](https://huggingface.co/facebook/nllb-200-distilled-600M) | Giấy phép CC-BY-NC (chỉ dùng phi thương mại) |
 | `llm`   | LLM mã nguồn mở tự host (Qwen2.5, Llama 3, Gemma…) qua Ollama / llama.cpp / LM Studio | Dịch theo ngữ cảnh cả đoạn, hiểu thuật ngữ tốt nhất; cần máy đủ mạnh |
 
+Mặc định (`auto`): máy có GPU NVIDIA dùng `vinai`, chỉ có CPU dùng `opus` cho nhanh.
 Mô hình Hugging Face chỉ cần tải **một lần** (tự động ở lần dịch đầu tiên hoặc dùng `scripts/download_models.py`),
 sau đó chạy offline hoàn toàn.
 
@@ -51,7 +52,7 @@ python scripts/download_models.py vinai opus
 ## Chạy
 
 ```bash
-./run.sh                    # hoặc: python -m uvicorn app.main:app --port 8000
+./run.sh                    # Windows: run.bat  (hoặc: python -m uvicorn app.main:app --port 8000)
 ```
 
 Mở <http://localhost:8000>, kéo thả file PDF, chọn mô hình và bấm **Bắt đầu dịch**.
@@ -83,7 +84,7 @@ Rồi chọn engine **LLM cục bộ** trên giao diện. Mọi server có API t
 
 | Biến | Mặc định | Ý nghĩa |
 |------|----------|---------|
-| `PDFTR_DEFAULT_ENGINE` | `vinai` | Engine mặc định |
+| `PDFTR_DEFAULT_ENGINE` | `auto` | Engine mặc định (`auto` / `vinai` / `opus` / `nllb` / `llm`) |
 | `PDFTR_DEVICE` | `auto` | `auto` / `cpu` / `cuda` / `mps` |
 | `PDFTR_BATCH_SIZE` | `8` | Số câu dịch mỗi lô |
 | `PDFTR_NUM_BEAMS` | `4` | Beam search (cao hơn = tốt hơn nhưng chậm hơn) |
@@ -109,6 +110,24 @@ diện (được ưu tiên hơn bảng mặc định) hoặc truyền file qua `
 4. **Dịch** từng câu theo lô; nếu mô hình làm mất placeholder thì tự dịch lại từng phần giữa các placeholder.
 5. **Khôi phục** placeholder, xóa chữ gốc (giữ hình và nét vẽ) và ghi bản dịch vào đúng khung cũ bằng font
    hỗ trợ tiếng Việt.
+
+## Không dịch được? Tự chẩn đoán
+
+```bash
+python -m app.doctor --try opus
+```
+
+Lệnh này kiểm tra thư viện, GPU, mô hình đã tải và thử dịch một câu thật, in ra lỗi cụ thể. Các lỗi hay gặp:
+
+| Hiện tượng | Nguyên nhân / cách sửa |
+|-----------|------------------------|
+| Mô hình hiện "chưa sẵn sàng", lỗi `Chưa cài torch, transformers...` | Chưa cài thư viện mô hình: `pip install torch --index-url https://download.pytorch.org/whl/cpu` rồi `pip install -r requirements-ml.txt`, sau đó **khởi động lại server** |
+| `Không nạp được mô hình ...` | Lần đầu cần Internet để tải mô hình từ huggingface.co (bị chặn/mạng chậm). Thử `python scripts/download_models.py opus` để xem lỗi tải |
+| Dừng lâu ở "Đang tải mô hình ... MB" | Đang tải lần đầu (OPUS ~300 MB, VinAI ~1,5 GB) — chờ tải xong, các lần sau không cần tải lại |
+| Dịch rất chậm | Máy chỉ có CPU: chọn engine **OPUS-MT**, hoặc giảm `PDFTR_NUM_BEAMS=1` |
+| `Lỗi khi nạp torch: ... DLL` (Windows) | Cài [Microsoft Visual C++ Redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe) rồi chạy lại |
+| `PDF gần như không có lớp chữ` | PDF dạng ảnh scan — cần OCR trước (`ocrmypdf`) |
+| `./run.sh` không chạy trên Windows | Dùng `run.bat` |
 
 ## Giới hạn
 

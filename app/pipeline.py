@@ -18,6 +18,7 @@ from .scientific import (
     split_sentences,
     translate_heading,
 )
+from .config import settings
 from .translators import Translator, get_cache
 
 log = logging.getLogger(__name__)
@@ -148,7 +149,7 @@ class TextTranslator:
         results: dict[str, str] = {}
 
         # Dịch theo từng lô nhỏ để báo tiến độ đều đặn.
-        chunk = 1 if self.engine.prefers_paragraphs else 32
+        chunk = 1 if self.engine.prefers_paragraphs else max(4, settings.batch_size)
         done = 0
         if progress:
             progress(0, total)

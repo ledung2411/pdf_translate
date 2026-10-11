@@ -17,7 +17,7 @@ from .jobs import manager
 from .pdf_processor import TranslateOptions, build_glossary
 from .pipeline import TextTranslator
 from .scientific import join_lines, load_builtin_glossary
-from .translators import TranslatorError, get_engine, list_engines
+from .translators import TranslatorError, default_engine_key, get_engine, list_engines
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
@@ -46,7 +46,7 @@ def engines() -> dict:
     for e in list_engines():
         ok, why = e.available()
         items.append({"key": e.key, "label": e.label, "description": e.description, "available": ok, "reason": why})
-    return {"default": settings.default_engine, "engines": items}
+    return {"default": default_engine_key(), "engines": items}
 
 
 @app.get("/api/glossary")
@@ -65,7 +65,7 @@ async def create_job(
     custom_glossary: str = Form(""),
     make_bilingual: bool = Form(True),
 ) -> dict:
-    engine = engine or settings.default_engine
+    engine = engine or default_engine_key()
     try:
         get_engine(engine)
     except TranslatorError as e:
@@ -128,7 +128,7 @@ def translate_text(req: TextRequest) -> dict:
     if len(text) > 20_000:
         raise HTTPException(413, "Văn bản quá dài (tối đa 20.000 ký tự).")
     try:
-        engine = get_engine(req.engine or settings.default_engine)
+        engine = get_engine(req.engine or default_engine_key())
         glossary = build_glossary(
             TranslateOptions(use_glossary=req.use_glossary, custom_glossary=req.custom_glossary)
         )

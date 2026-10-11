@@ -71,6 +71,7 @@ def fake_hf(monkeypatch):
     tf.AutoTokenizer, tf.AutoModelForSeq2SeqLM = AutoTokenizer, AutoModelForSeq2SeqLM
     monkeypatch.setitem(sys.modules, "torch", torch)
     monkeypatch.setitem(sys.modules, "transformers", tf)
+    monkeypatch.setitem(sys.modules, "sentencepiece", types.ModuleType("sentencepiece"))
     return created
 
 
@@ -93,6 +94,18 @@ def test_marian_has_no_lang_tokens(fake_hf):
     t = HFSeq2SeqTranslator("opus", "", "", "opus/x")
     assert t.translate_batch(["hello"]) == ["vi:hello"]
     assert "forced_bos_token_id" not in FakeModel.last_kwargs
+
+
+def test_missing_dependencies_reported(monkeypatch):
+    monkeypatch.setitem(sys.modules, "torch", None)  # import torch -> ImportError
+    ok, why = HFSeq2SeqTranslator("opus", "", "", "opus/x").available()
+    assert not ok and "torch" in why
+
+
+def test_prepare_reports_status(fake_hf):
+    msgs = []
+    HFSeq2SeqTranslator("opus", "", "", "opus/x").prepare(msgs.append)
+    assert msgs[0].startswith("Đang nạp mô hình") and "CPU" in msgs[-1]
 
 
 def test_cache_roundtrip(tmp_path):
