@@ -83,3 +83,42 @@ def test_api_job_flow(sample):
         assert client.get("/").status_code == 200
         t = client.post("/api/translate-text", json={"text": "Abstract", "engine": "mock"}).json()
         assert t["translation"] == "Tóm tắt"
+
+
+def test_wiley_text_font_is_not_math():
+    from app.scientific import has_prose, is_math_font
+
+    assert not is_math_font("STIXTwoText")
+    assert not is_math_font("STIXTwoText-Italic")
+    assert is_math_font("STIXTwoMath-Regular")
+    assert is_math_font("CMMI10")
+    assert has_prose("Perovskite solar cells have attracted considerable attention")
+    assert not has_prose("Attention(Q, K, V) = softmax(QKT / √d) V (1)")
+
+
+def test_merged_two_column_block_is_split():
+    from app.pdf_processor import _segment_blocks
+
+    def line(x0, x1, y, text):
+        sp = {"bbox": (x0, y, x1, y + 10), "text": text, "size": 9, "font": "STIXTwoText", "flags": 4, "color": 0}
+        return {"bbox": sp["bbox"], "spans": [sp], "dir": (1, 0)}
+
+    lines = []
+    for i in range(6):
+        lines.append(line(50, 290, 100 + 11 * i, f"left {i}"))
+        lines.append(line(304, 544, 100 + 11 * i, f"right {i}"))
+    out = _segment_blocks([{"type": 0, "bbox": (50, 100, 544, 170), "lines": lines}], pymupdf.Rect(0, 0, 595, 842))
+    assert len(out) == 2
+    assert [ln["spans"][0]["text"] for ln in out[0]["lines"]] == [f"left {i}" for i in range(6)]
+    assert [ln["spans"][0]["text"] for ln in out[1]["lines"]] == [f"right {i}" for i in range(6)]
+
+
+def test_pdf_without_paragraphs_reports_error(tmp_path):
+    doc = pymupdf.open()
+    page = doc.new_page()
+    for i in range(30):
+        page.insert_text((50, 50 + 20 * i), "12.5   33.1   0.98   41.0", fontsize=9)
+    p = tmp_path / "numbers.pdf"
+    doc.save(str(p))
+    with pytest.raises(PdfError, match="Không tìm thấy đoạn văn"):
+        translate_pdf(p, tmp_path / "o", TranslateOptions(engine="mock"))

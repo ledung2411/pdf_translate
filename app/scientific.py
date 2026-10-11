@@ -420,8 +420,11 @@ def join_lines(lines: list[str]) -> str:
 
 MATH_FONT_RE = re.compile(
     r"CMMI|CMSY|CMEX|CMBSY|MSAM|MSBM|EUFM|EUSM|EUEX|RSFS|wasy|stmary|esint|"
-    r"Symbol|Math|STIX|TeXGyre.*Math|MTMI|MTSY|MTEX|txmi|txsy|txex|pxmi|pxsy|"
-    r"rtxmi|ntxmi|LMMath|Cambria.?Math|Euclid|MathJax|KaTeX_(?!Main)",
+    # Lưu ý: "STIX Two Text" / "STIXGeneral" là font CHỮ thường (Wiley, Elsevier...) —
+    # chỉ các biến thể Math/Size/Integrals... mới là font toán.
+    r"Symbol|Math|STIX\w*(?:Size|Integrals|NonUnicode|Variants)|TeXGyre.*Math|"
+    r"MTMI|MTSY|MTEX|txmi|txsy|txex|pxmi|pxsy|rtxmi|ntxmi|LMMath|Cambria.?Math|"
+    r"Euclid(?:Symbol|Math|Extra|Fraktur)|MathJax|KaTeX_(?!Main)",
     re.IGNORECASE,
 )
 MONO_FONT_RE = re.compile(
@@ -431,6 +434,16 @@ MONO_FONT_RE = re.compile(
 
 def is_math_font(fontname: str) -> bool:
     return bool(MATH_FONT_RE.search(fontname or ""))
+
+
+def has_prose(text: str) -> bool:
+    """Đoạn chủ yếu là từ tiếng Anh thật (≥3 từ) → là chữ, không phải công thức.
+
+    Dùng khi font bị nhận nhầm là font toán; công thức kiểu ``softmax(QK^T)`` vẫn là công thức.
+    """
+    words = re.findall(r"\b[A-Za-z][a-z]{2,}\b(?!\s*\()", text)
+    non_space = sum(1 for c in text if not c.isspace())
+    return len(words) >= 3 and sum(map(len, words)) / max(non_space, 1) > 0.6
 
 
 def is_mono_font(fontname: str) -> bool:

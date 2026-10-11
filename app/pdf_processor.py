@@ -26,6 +26,7 @@ from .scientific import (
     Glossary,
     classify_block,
     is_math_font,
+    has_prose,
     is_mono_font,
     join_lines,
     load_builtin_glossary,
@@ -92,13 +93,94 @@ def _is_serif(span: dict) -> bool:
     return bool(span.get("flags", 0) & 4)
 
 
+def _line_bbox(spans: list[dict]) -> tuple[float, float, float, float]:
+    return (
+        min(sp["bbox"][0] for sp in spans), min(sp["bbox"][1] for sp in spans),
+        max(sp["bbox"][2] for sp in spans), max(sp["bbox"][3] for sp in spans),
+    )
+
+
+def _split_line_at_gaps(line: dict) -> list[dict]:
+    """Tách một "dòng" MuPDF chứa chữ của 2 cột (khoảng trống lớn ở giữa)."""
+    spans = [sp for sp in line.get("spans", []) if sp.get("text", "")]
+    if len(spans) < 2:
+        return [line]
+    parts: list[list[dict]] = [[spans[0]]]
+    for a, b in zip(spans, spans[1:]):
+        if b["bbox"][0] - a["bbox"][2] > max(a.get("size", 10) * 2.5, 12):
+            parts.append([b])
+        else:
+            parts[-1].append(b)
+    if len(parts) == 1:
+        return [line]
+    return [{**line, "spans": p, "bbox": _line_bbox(p)} for p in parts]
+
+
+def _x_overlap(a, b) -> float:
+    return min(a[2], b[2]) - max(a[0], b[0])
+
+
+def _segment_blocks(raw_blocks: list[dict], page_rect: pymupdf.Rect) -> list[dict]:
+    """Tách các khối MuPDF bị gộp nhầm nhiều cột.
+
+    Với bài báo 2 cột có khoảng giữa hẹp (Wiley, Elsevier...), MuPDF đôi khi gộp
+    cả 2 cột vào một khối với các dòng xen kẽ trái/phải. Ở đây nhóm lại các dòng
+    theo cột (chồng lấn theo chiều ngang) rồi cắt tiếp theo khoảng trống dọc.
+    Bảng thật (≥3 cột hoặc cột hẹp) vẫn giữ nguyên một khối.
+    """
+    out: list[dict] = []
+    for b in raw_blocks:
+        if b.get("type") != 0:
+            continue
+        lines = [pl for ln in b.get("lines", []) for pl in _split_line_at_gaps(ln)]
+        if not lines:
+            continue
+        # Gom dòng theo cột: hai dòng cùng cột nếu chồng lấn ngang đủ nhiều.
+        cols: list[dict] = []
+        for ln in sorted(lines, key=lambda l: (l["bbox"][1], l["bbox"][0])):
+            lb = ln["bbox"]
+            for c in cols:
+                cb = c["x"]
+                if _x_overlap(lb, cb) > 0.3 * min(lb[2] - lb[0], cb[2] - cb[0]):
+                    c["lines"].append(ln)
+                    c["x"] = (min(cb[0], lb[0]), 0, max(cb[2], lb[2]), 0)
+                    break
+            else:
+                cols.append({"x": (lb[0], 0, lb[2], 0), "lines": [ln]})
+        if len(cols) == 1:
+            out.append({**b, "lines": lines})
+            continue
+        widths = [c["x"][2] - c["x"][0] for c in cols]
+        if len(cols) >= 3 or min(widths) < 0.25 * page_rect.width:
+            out.append({**b, "lines": lines})  # bảng: giữ nguyên để không dịch vỡ bố cục
+            continue
+        for c in sorted(cols, key=lambda c: c["x"][0]):
+            group: list[dict] = []
+            for ln in c["lines"]:
+                if group:
+                    prev = group[-1]["bbox"]
+                    h = max(prev[3] - prev[1], 1)
+                    if ln["bbox"][1] - prev[3] > 0.8 * h:  # khoảng trống giữa đoạn
+                        out.append({"type": 0, "bbox": _union([g["bbox"] for g in group]), "lines": group})
+                        group = []
+                group.append(ln)
+            if group:
+                out.append({"type": 0, "bbox": _union([g["bbox"] for g in group]), "lines": group})
+    return out
+
+
+def _union(boxes: list) -> tuple[float, float, float, float]:
+    return (
+        min(x[0] for x in boxes), min(x[1] for x in boxes),
+        max(x[2] for x in boxes), max(x[3] for x in boxes),
+    )
+
+
 def extract_blocks(page: pymupdf.Page, page_index: int) -> list[TextBlock]:
     flags = pymupdf.TEXT_PRESERVE_WHITESPACE | pymupdf.TEXT_MEDIABOX_CLIP
     data = page.get_text("dict", flags=flags)
     blocks: list[TextBlock] = []
-    for b in data.get("blocks", []):
-        if b.get("type") != 0:
-            continue
+    for b in _segment_blocks(data.get("blocks", []), page.rect):
         lines_text: list[str] = []
         span_rects: list[pymupdf.Rect] = []
         total = math_chars = mono_chars = 0
@@ -126,7 +208,7 @@ def extract_blocks(page: pymupdf.Page, page_index: int) -> list[TextBlock]:
                 if t.strip():
                     span_rects.append(rect)
                 total += n
-                is_math = is_math_font(font) or looks_mathy(t)
+                is_math = (is_math_font(font) and not has_prose(t)) or looks_mathy(t)
                 is_sup = bool(sp.get("flags", 0) & 1) and t.strip() and not is_math
                 if is_math:
                     math_chars += n
@@ -607,6 +689,13 @@ def translate_pdf(
         mark_references(all_blocks)
 
     to_translate = [b for b in all_blocks if b.kind == "text"]
+    stats = {k: sum(1 for b in all_blocks if b.kind == k) for k in {b.kind for b in all_blocks}}
+    log.info("Thống kê khối: %s", stats)
+    if not to_translate:
+        raise PdfError(
+            f"Không tìm thấy đoạn văn nào cần dịch (phân loại khối: {stats}). "
+            "Hãy chạy: python -m app.inspect <file.pdf> và gửi kết quả để được hỗ trợ."
+        )
     engine = get_engine(opts.engine)
     ok, why = engine.available()
     if not ok:
@@ -649,7 +738,5 @@ def translate_pdf(
     p3 = out_dir / f"{stem}_vi.md"
     p3.write_text(blocks_to_markdown(pages_blocks, page_numbers), encoding="utf-8")
     outputs["markdown"] = p3
-    stats = {k: sum(1 for b in all_blocks if b.kind == k) for k in {b.kind for b in all_blocks}}
-    log.info("Thống kê khối: %s", stats)
     report(1.0, "Hoàn tất")
     return outputs
