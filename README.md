@@ -126,6 +126,7 @@ Lệnh này kiểm tra thư viện, GPU, mô hình đã tải và thử dịch m
 | Dừng lâu ở "Đang tải mô hình ... MB" | Đang tải lần đầu (OPUS ~300 MB, VinAI ~1,5 GB) — chờ tải xong, các lần sau không cần tải lại |
 | Dịch rất chậm | Máy chỉ có CPU: chọn engine **OPUS-MT**, hoặc giảm `PDFTR_NUM_BEAMS=1` |
 | `Lỗi khi nạp torch: ... DLL` (Windows) | Cài [Microsoft Visual C++ Redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe) rồi chạy lại |
+| File kết quả vẫn tiếng Anh / `Không tìm thấy đoạn văn nào cần dịch` | Chạy `python -m app.inspect file.pdf` để xem tool phân loại từng khối chữ, gửi kết quả để được hỗ trợ |
 | `PDF gần như không có lớp chữ` | PDF dạng ảnh scan — cần OCR trước (`ocrmypdf`) |
 | `./run.sh` không chạy trên Windows | Dùng `run.bat` |
 
