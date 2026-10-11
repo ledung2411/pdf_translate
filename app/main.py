@@ -20,6 +20,8 @@ from .scientific import join_lines, load_builtin_glossary
 from .translators import TranslatorError, default_engine_key, get_engine, list_engines
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+for _noisy in ("httpx", "httpx2", "httpcore", "huggingface_hub", "urllib3"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
 
 STATIC_DIR = Path(__file__).parent / "static"
 DOWNLOAD_NAMES = {

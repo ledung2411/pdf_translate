@@ -73,6 +73,9 @@ def fake_hf(monkeypatch):
     monkeypatch.setitem(sys.modules, "torch", torch)
     monkeypatch.setitem(sys.modules, "transformers", tf)
     monkeypatch.setitem(sys.modules, "sentencepiece", types.ModuleType("sentencepiece"))
+    hub = types.ModuleType("huggingface_hub")
+    hub.snapshot_download = lambda name, **kw: created.setdefault("snap", []).append(kw) or f"/cache/{name}"
+    monkeypatch.setitem(sys.modules, "huggingface_hub", hub)
     return created
 
 
@@ -82,6 +85,12 @@ def test_mbart_uses_decoder_start_token_and_keeps_order(fake_hf):
     assert t.translate_batch(texts) == [f"vi:{x}" for x in texts]
     assert FakeModel.last_kwargs["decoder_start_token_id"] == 250024
     assert fake_hf["tok"].kwargs["src_lang"] == "en_XX"
+
+
+def test_loads_from_local_cache_without_network(fake_hf):
+    HFSeq2SeqTranslator("opus", "", "", "opus/x").prepare()
+    assert fake_hf["snap"] == [{"local_files_only": True}]
+    assert fake_hf["tok"].kwargs["name"] == "/cache/opus/x"
 
 
 def test_nllb_uses_forced_bos(fake_hf):

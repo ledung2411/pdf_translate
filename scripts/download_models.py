@@ -6,8 +6,9 @@
 
 import os
 import sys
+from pathlib import Path
 
-from huggingface_hub import snapshot_download
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 MODELS = {
     "vinai": os.environ.get("PDFTR_VINAI_MODEL", "vinai/vinai-translate-en2vi-v2"),
@@ -20,10 +21,8 @@ if __name__ == "__main__":
     for k in keys:
         if k not in MODELS:
             sys.exit(f"Không biết mô hình '{k}'. Chọn trong: {', '.join(MODELS)}")
+        from app.translators import get_engine
+
         print(f"Đang tải {MODELS[k]} ...")
-        path = snapshot_download(
-            MODELS[k],
-            allow_patterns=["*.json", "*.model", "*.spm", "*.txt", "*.safetensors", "*.bin", "*.py", "sentencepiece*"],
-        )
-        print(f"  -> {path}")
-    print("Xong. Có thể đặt HF_HUB_OFFLINE=1 để chạy hoàn toàn offline.")
+        get_engine(k).prepare(print)
+    print("Xong. Từ giờ mô hình được nạp từ máy, không cần Internet.")

@@ -78,6 +78,12 @@ class Translator(ABC):
 # ---------------------------------------------------------------------------
 
 
+_TOKENIZER_FILES = [
+    "config.json", "generation_config.json", "tokenizer*", "special_tokens_map.json",
+    "vocab*", "*.spm", "*.model", "sentencepiece*", "added_tokens.json",
+]
+
+
 class HFSeq2SeqTranslator(Translator):
     def __init__(
         self,
@@ -120,6 +126,28 @@ class HFSeq2SeqTranslator(Translator):
     def prepare(self, status: StatusFn | None = None) -> None:
         with self._lock:
             self._load(status)
+
+    def _local_path(self, download: bool) -> str:
+        """Đường dẫn thư mục mô hình trên máy.
+
+        Nạp từ thư mục cục bộ thay vì tên repo để ``transformers`` không gọi mạng
+        mỗi lần khởi động (kiểm tra cập nhật, tự tải thêm bản safetensors ~1,5 GB).
+        Chỉ khi chưa có mô hình mới tải về — đúng một lần, chỉ các file cần thiết.
+        """
+        if Path(self.model_name).exists():
+            return self.model_name
+        from huggingface_hub import snapshot_download
+
+        if not download:
+            return snapshot_download(self.model_name, local_files_only=True)
+        from huggingface_hub import HfApi
+
+        files = HfApi().list_repo_files(self.model_name)
+        if any(f.endswith(".safetensors") for f in files):
+            weights = ["model*.safetensors", "model.safetensors.index.json"]
+        else:
+            weights = ["pytorch_model*.bin", "pytorch_model.bin.index.json"]
+        return snapshot_download(self.model_name, allow_patterns=[*_TOKENIZER_FILES, *weights])
 
     def _watch_download(self, status: StatusFn | None) -> Callable[[], None]:
         """Báo số MB đã tải trong lúc Hugging Face tải mô hình lần đầu."""
@@ -171,8 +199,14 @@ class HFSeq2SeqTranslator(Translator):
             kwargs["src_lang"] = self.src_lang
         stop_watch = self._watch_download(status)
         try:
-            tok = AutoTokenizer.from_pretrained(self.model_name, **kwargs)
-            model = AutoModelForSeq2SeqLM.from_pretrained(self.model_name)
+            try:
+                path = self._local_path(download=False)
+                tok = AutoTokenizer.from_pretrained(path, **kwargs)
+                model = AutoModelForSeq2SeqLM.from_pretrained(path)
+            except Exception:  # noqa: BLE001  (chưa có trong cache / cache thiếu file)
+                path = self._local_path(download=True)
+                tok = AutoTokenizer.from_pretrained(path, **kwargs)
+                model = AutoModelForSeq2SeqLM.from_pretrained(path)
         except Exception as e:  # noqa: BLE001
             raise TranslatorError(
                 f"Không nạp được mô hình {self.model_name}: {e}. "
