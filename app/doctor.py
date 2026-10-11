@@ -55,7 +55,7 @@ def main(argv: list[str] | None = None) -> int:
         if torch.cuda.is_available():
             print(f"{OK} GPU: {torch.cuda.get_device_name(0)}")
         else:
-            print(f"{WARN} Không có GPU — dịch bằng CPU (nên dùng engine 'opus' cho nhanh).")
+            print(f"{WARN} Không có GPU — dịch bằng CPU (chậm hơn, có thể đặt PDFTR_NUM_BEAMS=2 để nhanh hơn).")
         try:
             from huggingface_hub import scan_cache_dir
 

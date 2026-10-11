@@ -159,7 +159,7 @@ function showJob(job) {
   err.classList.toggle("hidden", job.status !== "error");
   if (job.status === "error") {
     err.textContent = (job.error || "Có lỗi xảy ra.") +
-      "\n\nĐể chẩn đoán, chạy trong thư mục dự án: python -m app.doctor --try opus";
+      "\n\nĐể chẩn đoán, chạy trong thư mục dự án: python -m app.doctor --try vinai";
   }
 
   const dl = $("#downloads");

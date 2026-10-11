@@ -12,6 +12,7 @@ from app.translators import HFSeq2SeqTranslator, TranslationCache
 class FakeTensor:
     def __init__(self, rows):
         self.rows = rows
+        self.shape = (len(rows), 12)
 
     def to(self, device):
         return self
@@ -91,6 +92,12 @@ def test_loads_from_local_cache_without_network(fake_hf):
     HFSeq2SeqTranslator("opus", "", "", "opus/x").prepare()
     assert fake_hf["snap"] == [{"local_files_only": True}]
     assert fake_hf["tok"].kwargs["name"] == "/cache/opus/x"
+
+
+def test_generation_guards_against_loops(fake_hf):
+    HFSeq2SeqTranslator("opus", "", "", "opus/x").translate_batch(["hello"])
+    assert FakeModel.last_kwargs["no_repeat_ngram_size"] == 4
+    assert FakeModel.last_kwargs["max_length"] == 40  # 12 token đầu vào * 2.5 + 10
 
 
 def test_nllb_uses_forced_bos(fake_hf):

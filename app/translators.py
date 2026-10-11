@@ -58,6 +58,8 @@ class Translator(ABC):
     # LLM dịch tốt hơn khi nhận cả đoạn văn và tự xử lý glossary qua prompt.
     prefers_paragraphs: bool = False
     uses_glossary_prompt: bool = False
+    # Chỉ LLM giữ được placeholder {n}; mô hình dịch máy biến chúng thành chữ rác.
+    supports_placeholders: bool = False
 
     @abstractmethod
     def translate_batch(self, texts: list[str], glossary: dict[str, str] | None = None) -> list[str]:
@@ -232,10 +234,9 @@ class HFSeq2SeqTranslator(Translator):
             tok, model = self._tokenizer, self._model
             gen_kwargs: dict = {
                 "num_beams": settings.num_beams,
-                # Chỉ đặt max_length (generation_config của Marian cũng dùng max_length)
-                # để tránh cảnh báo "Both max_new_tokens and max_length".
-                "max_length": 512,
                 "early_stopping": True,
+                # Chặn vòng lặp kiểu "chúng ta tính chúng ta tính..." của mô hình nhỏ.
+                "no_repeat_ngram_size": 4,
             }
             if self.tgt_lang:
                 tgt_id = tok.convert_tokens_to_ids(self.tgt_lang)
@@ -253,8 +254,10 @@ class HFSeq2SeqTranslator(Translator):
                 batch = [texts[i] for i in idx]
                 enc = tok(batch, return_tensors="pt", padding=True, truncation=True, max_length=512)
                 enc = {k: v.to(self._device) for k, v in enc.items()}
+                # Bản dịch không thể dài hơn ~2,5 lần câu gốc: chặn sinh lan man tới 512 token.
+                in_len = int(enc["input_ids"].shape[1])
                 with torch.inference_mode():
-                    out = model.generate(**enc, **gen_kwargs)
+                    out = model.generate(**enc, **gen_kwargs, max_length=min(512, int(in_len * 2.5) + 10))
                 decoded = tok.batch_decode(out, skip_special_tokens=True)
                 for i, d in zip(idx, decoded):
                     results[i] = d.strip()
@@ -279,6 +282,7 @@ class LLMTranslator(Translator):
     description = "Dịch theo ngữ cảnh cả đoạn, hiểu thuật ngữ tốt; cần tự chạy một LLM mã nguồn mở."
     prefers_paragraphs = True
     uses_glossary_prompt = True
+    supports_placeholders = True
 
     def cache_id(self) -> str:
         return f"llm:{settings.llm_model}"
@@ -400,7 +404,7 @@ def _build_registry() -> None:
         HFSeq2SeqTranslator(
             "vinai",
             "VinAI Translate En→Vi (khuyên dùng)",
-            "Mô hình của VinAI, chất lượng tốt nhất cho Anh→Việt (~1,5 GB, nên có GPU).",
+            "Mô hình của VinAI, chất lượng tốt nhất trong nhóm (~1,5 GB). Chạy được trên CPU, nhanh hơn nhiều nếu có GPU.",
             os.environ.get("PDFTR_VINAI_MODEL", "vinai/vinai-translate-en2vi-v2"),
             src_lang="en_XX",
             tgt_lang="vi_VN",
@@ -408,8 +412,8 @@ def _build_registry() -> None:
         ),
         HFSeq2SeqTranslator(
             "opus",
-            "OPUS-MT En→Vi (nhẹ, nhanh)",
-            "Helsinki-NLP MarianMT ~300 MB, chạy nhanh trên CPU, chất lượng khá.",
+            "OPUS-MT En→Vi (nhanh, chất lượng thấp)",
+            "Helsinki-NLP MarianMT ~300 MB, nhanh trên CPU nhưng hay dịch sai thuật ngữ — chỉ để xem nhanh.",
             os.environ.get("PDFTR_OPUS_MODEL", "Helsinki-NLP/opus-mt-en-vi"),
         ),
         HFSeq2SeqTranslator(
@@ -435,7 +439,9 @@ def default_engine_key() -> str:
     try:
         import torch
 
-        return "vinai" if torch.cuda.is_available() else "opus"
+        # VinAI chất lượng tốt hơn OPUS rất nhiều với văn bản khoa học, nên dùng
+        # mặc định kể cả trên CPU (chậm hơn nhưng bản dịch đọc được).
+        return "vinai"
     except Exception:  # noqa: BLE001
         # Chưa cài torch: dùng LLM cục bộ nếu đang chạy, nếu không vẫn trả về
         # "opus" để thông báo lỗi hướng dẫn cài đặt.

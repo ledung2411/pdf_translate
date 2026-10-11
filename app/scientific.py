@@ -248,6 +248,11 @@ class Glossary:
 
         return self._re.sub(rep, text)
 
+    def apply_to_output(self, text: str) -> str:
+        """Thay trực tiếp (không qua placeholder) các thuật ngữ còn sót tiếng Anh trong bản dịch."""
+        p = Protector()
+        return p.restore(self.protect(p.protect_braces(text), p))
+
     def relevant(self, text: str) -> dict[str, str]:
         """Các mục glossary xuất hiện trong ``text`` (dùng làm gợi ý cho LLM)."""
         if self._re is None:
@@ -298,13 +303,14 @@ SECTION_HEADINGS = {
     "appendices": "Phụ lục",
     "supplementary material": "Tài liệu bổ sung",
     "keywords": "Từ khóa",
+    "key words": "Từ khóa",
     "index terms": "Từ khóa",
     "contents": "Mục lục",
     "table of contents": "Mục lục",
 }
 
 _HEADING_NUM_RE = re.compile(
-    r"^\s*((?:[0-9]+(?:\.[0-9]+)*\.?|[IVXLC]+\.|[A-Z]\.|Appendix\s+[A-Z0-9]+[.:]?)\s+)?(.*?)\s*[.:]?\s*$"
+    r"^\s*((?:[0-9]+(?:\.[0-9]+)*\.?|[IVXLC]+\.|[A-Z]\.|Appendix\s+[A-Z0-9]+[.:]?)\s*\|?\s+)?(.*?)\s*[.:]?\s*$"
 )
 REFERENCES_RE = re.compile(
     r"^\s*(?:[0-9]+\.?|[IVXLC]+\.)?\s*(references|bibliography|literature cited|works cited|reference list)\s*$",
@@ -411,8 +417,12 @@ def join_lines(lines: list[str]) -> str:
             continue
         if not out:
             out = line
-        elif re.search(r"[A-Za-z]-$", out) and line[:1].islower():
-            out = out[:-1] + line
+        elif re.search(r"[A-Za-z]-$", out):
+            prev_word = re.search(r"(\S+)-$", out).group(1)
+            if line[:1].islower() and prev_word.islower() and prev_word.isalpha():
+                out = out[:-1] + line  # từ bị ngắt dòng: "trans-" + "former"
+            else:
+                out = out + line  # từ ghép: "dMRI-" + "specific", "Weakly-" + "Supervised"
         else:
             out = f"{out} {line}"
     return re.sub(r"[ \t]+", " ", out)

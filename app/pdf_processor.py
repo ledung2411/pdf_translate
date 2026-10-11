@@ -202,6 +202,9 @@ def extract_blocks(page: pymupdf.Page, page_index: int) -> list[TextBlock]:
                 t = sp.get("text", "")
                 if not t:
                     continue
+                # Wiley chèn dấu cách ("dummy-space") sau gạch nối: "Weakly- Supervised".
+                if not t.strip() and parts and parts[-1].rstrip(MATH_END + SUP_END).endswith("-"):
+                    continue
                 n = len(t.strip())
                 font = sp.get("font", "")
                 rect = pymupdf.Rect(sp["bbox"])

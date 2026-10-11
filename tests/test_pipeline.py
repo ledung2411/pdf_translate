@@ -6,9 +6,10 @@ from app.translators import Translator
 
 
 class EchoTranslator(Translator):
-    """Giả lập mô hình: giữ nguyên placeholder, đánh dấu phần đã dịch."""
+    """Giả lập LLM: giữ nguyên placeholder, đánh dấu phần đã dịch."""
 
     key = "echo"
+    supports_placeholders = True
 
     def __init__(self):
         self.calls: list[str] = []
@@ -67,3 +68,71 @@ def test_duplicate_sentences_translated_once():
     tr = TextTranslator(eng, None, use_cache=False)
     tr.translate_texts(["Preprint under review.", "Preprint under review."])
     assert eng.calls.count("Preprint under review.") == 1
+
+
+# ---------------- Mô hình dịch máy (OPUS / VinAI): không dùng placeholder ----------------
+
+
+class NMTEcho(Translator):
+    key = "nmt"
+
+    def __init__(self, mapping=None):
+        self.calls: list[str] = []
+        self.mapping = mapping or {}
+
+    def translate_batch(self, texts, glossary=None):
+        self.calls.extend(texts)
+        return [self.mapping.get(t, f"VI<{t}>") for t in texts]
+
+
+def test_nmt_never_sees_placeholders_or_markers():
+    eng = NMTEcho()
+    tr = TextTranslator(eng, Glossary(load_builtin_glossary()), use_cache=False)
+    src = (
+        f"We train a deep learning model on {MATH_START}x ∈ ℝ{MATH_END} with area 5 cm{SUP_START}2{SUP_END} "
+        "(see Fig. 3) [20]. Contact fan.zhang@uestc.edu.cn."
+    )
+    (out,) = tr.translate_texts([src])
+    assert eng.calls and all("{" not in c and "\ue000" not in c and "\ue002" not in c for c in eng.calls)
+    assert "x ∈ ℝ" in eng.calls[0] and "cm²" in eng.calls[0]
+    # Thuật ngữ & nhãn được Việt hóa sau khi dịch
+    assert "học sâu" in out and "Hình 3" in out
+
+
+def test_upper_and_title_case_normalized_for_nmt():
+    eng = NMTEcho({"Research article": "Bài báo nghiên cứu"})
+    tr = TextTranslator(eng, None, use_cache=False)
+    out = tr.translate_texts([
+        "RESEARCH ARTICLE",
+        "DDSurfer: A Weakly-Supervised Framework for Cortical Surface Reconstruction From Diffusion MRI",
+        "1 University of Electronic Science and Technology of China, Chengdu, China 3 School of Medicine, Tel Aviv, Israel",
+        "ABSTRACT Cortical surface reconstruction is critical.",
+    ])
+    assert out[0] == "BÀI BÁO NGHIÊN CỨU"
+    assert eng.calls[1] == "DDSurfer: a weakly-supervised framework for cortical surface reconstruction from diffusion MRI"
+    assert "China, Chengdu" in eng.calls[2]  # tên riêng không bị viết thường
+    assert out[3].startswith("TÓM TẮT VI<Cortical")
+
+
+def test_degenerate_output_is_repaired_or_kept_english():
+    bad = "Hệ Lục Hệ Hệ Hệ Hệ Hệ Hệ Hệ Hệ"
+    eng = NMTEcho({
+        "Advanced science journal is great, and it is open": bad,
+        "Advanced science journal is great,": "Tạp chí rất tốt,",
+        "and it is open": "chúng ta tính chúng ta tính chúng ta tính chúng ta tính",
+    })
+    tr = TextTranslator(eng, None, use_cache=False)
+    (out,) = tr.translate_texts(["Advanced science journal is great, and it is open"])
+    assert out == "Tạp chí rất tốt, and it is open"
+
+
+def test_is_degenerate():
+    from app.pipeline import is_degenerate
+
+    assert is_degenerate("Advanced Science", "Hệ Lục Hệ Hệ Hệ Hệ Hệ Hệ")
+    assert is_degenerate("RESEARCH ARTICLE", "thay_ hạ_ _ _ bitS_ ____")
+    assert is_degenerate("We first compute x.", "Chúng ta đầu tiên tiên chúng ta tính chúng ta tính chúng ta tính chúng ta tính")
+    assert not is_degenerate(
+        "We propose a novel framework for cortical surface reconstruction.",
+        "Chúng tôi đề xuất một khung mới để tái tạo bề mặt vỏ não.",
+    )

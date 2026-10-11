@@ -89,12 +89,14 @@ def test_headings():
     assert translate_heading("2.1. Related Work") == "2.1. Các công trình liên quan"
     assert translate_heading("IV. CONCLUSIONS") == "IV. KẾT LUẬN"
     assert translate_heading("References") == "Tài liệu tham khảo"
+    assert translate_heading("2 | Methods") == "2 | Phương pháp"
     assert translate_heading("We introduce a method") is None
 
 
 def test_join_lines_dehyphenates():
     assert join_lines(["The trans-", "former model", "works."]) == "The transformer model works."
-    assert join_lines(["State-of-the-", "Art"]) == "State-of-the- Art"
+    assert join_lines(["State-of-the-", "Art"]) == "State-of-the-Art"
+    assert join_lines(["a dMRI-", "specific pipeline"]) == "a dMRI-specific pipeline"
 
 
 def test_classify_block():

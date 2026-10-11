@@ -25,11 +25,11 @@ lên dịch vụ bên ngoài.
 | Engine  | Mô hình | Ghi chú |
 |---------|---------|---------|
 | `vinai` | [vinai/vinai-translate-en2vi-v2](https://huggingface.co/vinai/vinai-translate-en2vi-v2) | Chất lượng Anh→Việt tốt nhất trong nhóm mô hình nhỏ; ~1,5 GB; nên có GPU nhưng CPU vẫn chạy được |
-| `opus`  | [Helsinki-NLP/opus-mt-en-vi](https://huggingface.co/Helsinki-NLP/opus-mt-en-vi) | Nhẹ (~300 MB), nhanh trên CPU, chất lượng khá |
+| `opus`  | [Helsinki-NLP/opus-mt-en-vi](https://huggingface.co/Helsinki-NLP/opus-mt-en-vi) | Nhẹ (~300 MB), nhanh trên CPU nhưng dịch văn bản khoa học kém — chỉ để xem nhanh |
 | `nllb`  | [facebook/nllb-200-distilled-600M](https://huggingface.co/facebook/nllb-200-distilled-600M) | Giấy phép CC-BY-NC (chỉ dùng phi thương mại) |
 | `llm`   | LLM mã nguồn mở tự host (Qwen2.5, Llama 3, Gemma…) qua Ollama / llama.cpp / LM Studio | Dịch theo ngữ cảnh cả đoạn, hiểu thuật ngữ tốt nhất; cần máy đủ mạnh |
 
-Mặc định (`auto`): máy có GPU NVIDIA dùng `vinai`, chỉ có CPU dùng `opus` cho nhanh.
+Mặc định (`auto`) dùng `vinai`. `opus` nhanh hơn nhưng dịch văn bản khoa học kém, chỉ nên dùng để xem nhanh.
 Mô hình Hugging Face chỉ cần tải **một lần** (tự động ở lần dịch đầu tiên hoặc dùng `scripts/download_models.py`),
 sau đó chạy offline hoàn toàn.
 
@@ -114,7 +114,7 @@ diện (được ưu tiên hơn bảng mặc định) hoặc truyền file qua `
 ## Không dịch được? Tự chẩn đoán
 
 ```bash
-python -m app.doctor --try opus
+python -m app.doctor --try vinai
 ```
 
 Lệnh này kiểm tra thư viện, GPU, mô hình đã tải và thử dịch một câu thật, in ra lỗi cụ thể. Các lỗi hay gặp:
@@ -124,7 +124,7 @@ Lệnh này kiểm tra thư viện, GPU, mô hình đã tải và thử dịch m
 | Mô hình hiện "chưa sẵn sàng", lỗi `Chưa cài torch, transformers...` | Chưa cài thư viện mô hình: `pip install torch --index-url https://download.pytorch.org/whl/cpu` rồi `pip install -r requirements-ml.txt`, sau đó **khởi động lại server** |
 | `Không nạp được mô hình ...` | Lần đầu cần Internet để tải mô hình từ huggingface.co (bị chặn/mạng chậm). Thử `python scripts/download_models.py opus` để xem lỗi tải |
 | Dừng lâu ở "Đang tải mô hình ... MB" | Đang tải lần đầu (OPUS ~300 MB, VinAI ~1,5 GB) — chờ tải xong, các lần sau không cần tải lại |
-| Dịch rất chậm | Máy chỉ có CPU: chọn engine **OPUS-MT**, hoặc giảm `PDFTR_NUM_BEAMS=1` |
+| Dịch rất chậm | Máy chỉ có CPU: đặt `PDFTR_NUM_BEAMS=2` (nhanh gấp ~2 lần, chất lượng giảm nhẹ), hoặc dịch theo khoảng trang |
 | `Lỗi khi nạp torch: ... DLL` (Windows) | Cài [Microsoft Visual C++ Redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe) rồi chạy lại |
 | File kết quả vẫn tiếng Anh / `Không tìm thấy đoạn văn nào cần dịch` | Chạy `python -m app.inspect file.pdf` để xem tool phân loại từng khối chữ, gửi kết quả để được hỗ trợ |
 | `PDF gần như không có lớp chữ` | PDF dạng ảnh scan — cần OCR trước (`ocrmypdf`) |
