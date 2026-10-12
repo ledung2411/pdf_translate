@@ -58,7 +58,7 @@ def main(argv: list[str] | None = None) -> int:
         n = ctranslate2.get_cuda_device_count()
         print(f"{OK if n else WARN} CTranslate2: {'GPU' if n else 'CPU (int8)'}")
     elif has_torch:
-        print(f"{WARN} Chưa cài ctranslate2 — đang dùng torch (chậm hơn ~3-4 lần). Cài: pip install ctranslate2")
+        print(f"{WARN} Chưa cài ctranslate2 — đang dùng torch (chậm hơn ~3 lần). Cài: pip install ctranslate2")
     if ml:
         from .translators import HFSeq2SeqTranslator, list_engines as _engines
 
