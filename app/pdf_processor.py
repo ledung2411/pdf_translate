@@ -34,6 +34,7 @@ from .scientific import (
     looks_mathy,
     parse_glossary,
 )
+from .layout import apply_layout, get_detector
 from .ocr import OcrError, find_tessdata, is_scanned, ocr_textpage
 from .tm import get_tm
 from .translators import TranslatorError, get_engine
@@ -60,6 +61,7 @@ class TranslateOptions:
     highlight_doubtful: bool = True  # tô vàng đoạn nghi ngờ trong PDF
     use_tm: bool = True  # dùng bản dịch đã duyệt trong bộ nhớ dịch (TM)
     ocr: bool = True  # tự OCR các trang ảnh scan
+    layout_model: bool = True  # dùng mô hình nhận diện bố cục nếu có
 
 
 # Khối văn bản = vùng trong DocIR (giữ tên cũ cho dễ đọc).
@@ -885,6 +887,7 @@ def analyze_pdf(input_path: Path, opts: TranslateOptions, progress: ProgressFn |
 
     ir = Document(source=input_path.name)
     tessdata: str | None = None
+    detector = get_detector() if opts.layout_model else None
     for i, num in enumerate(numbers):
         page = doc[i]
         scanned = opts.ocr and is_scanned(page)
@@ -905,6 +908,13 @@ def analyze_pdf(input_path: Path, opts: TranslateOptions, progress: ProgressFn |
                 # Dải chữ hẹp và cao (watermark xoay, số dòng ở lề) → OCR ra rác, bỏ qua
                 if r.bbox.width < 0.06 * page.rect.width and r.bbox.height > 3 * r.bbox.width:
                     r.kind = "rotated"
+        if detector is not None:
+            try:
+                n_changed = apply_layout(regions, detector.detect(page))
+                if n_changed:
+                    log.info("Trang %d: mô hình bố cục sửa phân loại %d vùng", num, n_changed)
+            except Exception as e:  # noqa: BLE001  (mô hình lỗi → giữ phân loại bằng luật)
+                log.warning("Nhận diện bố cục trang %d lỗi: %s", num, e)
         ir.pages.append(
             Page(index=i, number=num, width=page.rect.width, height=page.rect.height,
                  regions=regions, scanned=scanned)

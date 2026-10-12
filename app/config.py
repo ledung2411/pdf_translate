@@ -29,6 +29,13 @@ class Settings:
     max_pages: int = int(os.environ.get("PDFTR_MAX_PAGES", "500"))
     job_ttl_hours: float = float(os.environ.get("PDFTR_JOB_TTL_HOURS", "24"))
     enable_mock: bool = _env_bool("PDFTR_ENABLE_MOCK", False)
+    # Nhận diện bố cục bằng mô hình (DocLayout-YOLO ONNX): auto | off
+    layout: str = os.environ.get("PDFTR_LAYOUT", "auto")
+    layout_model: str = os.environ.get(
+        "PDFTR_LAYOUT_MODEL",
+        "wybxc/DocLayout-YOLO-DocStructBench-onnx/doclayout_yolo_docstructbench_imgsz1024.onnx",
+    )
+    layout_imgsz: int = int(os.environ.get("PDFTR_LAYOUT_IMGSZ", "1024"))
     # OCR cho trang scan (dữ liệu Tesseract tự tải nếu thiếu)
     ocr_lang: str = os.environ.get("PDFTR_OCR_LANG", "eng")
     ocr_dpi: int = int(os.environ.get("PDFTR_OCR_DPI", "300"))

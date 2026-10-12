@@ -76,6 +76,17 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print(f"{BAD} Thiếu thư viện mô hình. Cài: pip install -r requirements-ml.txt")
 
+    print("\n# Nhận diện bố cục & OCR")
+    from . import layout
+    from .ocr import find_tessdata
+
+    ok, info = layout.status()
+    print(f"{OK if ok else WARN} Mô hình bố cục: {info}")
+    try:
+        print(f"{OK} Dữ liệu OCR: {find_tessdata(download=False)}")
+    except Exception:  # noqa: BLE001
+        print(f"{WARN} Dữ liệu OCR: chưa có (sẽ tự tải eng.traineddata khi gặp PDF scan)")
+
     from .translators import default_engine_key, list_engines
 
     print("\n# Engine")

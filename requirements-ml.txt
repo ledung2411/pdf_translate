@@ -4,6 +4,8 @@ ctranslate2>=4.4
 transformers>=4.40
 sentencepiece>=0.1.99
 sacremoses>=0.1.1
+# Nhận diện bố cục trang bằng mô hình DocLayout-YOLO (tùy chọn, ~75 MB tải lần đầu)
+onnxruntime>=1.17
 protobuf>=3.20
 # torch chỉ cần MỘT LẦN để chuyển mô hình sang CTranslate2 (hoặc khi đặt PDFTR_BACKEND=hf):
 #   pip install torch --index-url https://download.pytorch.org/whl/cpu
