@@ -102,6 +102,44 @@ def bench_pdf(engine_key: str, pdf: Path) -> dict:
     }
 
 
+def translate_with(eng, engine_key: str, lines: list[str], mode: str) -> list[str]:
+    """Dịch qua đúng quy trình của tool (chuẩn hóa chữ hoa, thuật ngữ...) với chế độ thuật ngữ ``mode``."""
+    from app.pdf_processor import TranslateOptions, build_glossary
+    from app.pipeline import TextTranslator
+
+    old, settings.nmt_terms = settings.nmt_terms, mode
+    try:
+        tr = TextTranslator(eng, build_glossary(TranslateOptions(engine=engine_key)), use_cache=False)
+        return tr.translate_texts(lines)
+    finally:
+        settings.nmt_terms = old
+
+
+def terms_eval(eng, engine_key: str, src_path: Path | None, ref_path: Path | None, modes: list[str]) -> dict:
+    """Trên các câu có thuật ngữ nhiều từ: tỷ lệ ra đúng thuật ngữ tiếng Việt và chrF của mỗi chế độ."""
+    from app.pdf_processor import TranslateOptions, build_glossary
+
+    if not (src_path and ref_path):
+        return {}
+    g = build_glossary(TranslateOptions(engine=engine_key))
+    pairs = []
+    for en, vi in zip(read_lines(src_path, None), read_lines(ref_path, None)):
+        terms = [m.group(0) for m in g._re.finditer(en) if " " in m.group(0).strip()]
+        if terms:
+            pairs.append((en, vi, [g._lookup[t.lower()] for t in terms]))
+    print(f"[thuật ngữ] {len(pairs)} câu của tập thử có thuật ngữ nhiều từ", flush=True)
+    if not pairs:
+        return {"sentences": 0}
+    out = {"sentences": len(pairs)}
+    for m in modes:
+        hyp = translate_with(eng, engine_key, [p[0] for p in pairs], m)
+        hit = sum(t.lower() in h.lower() for h, p in zip(hyp, pairs) for t in p[2])
+        total = sum(len(p[2]) for p in pairs)
+        out[m] = {"term_hit": round(hit / total, 3), **scores(hyp, [p[1] for p in pairs])}
+        print(f"[thuật ngữ] {m}: {out[m]}", flush=True)
+    return out
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--engine", default="vinai")
@@ -112,6 +150,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--pdf", type=Path, action="append", default=[], help="PDF để đo giây/trang")
     ap.add_argument("--try", dest="try_file", type=Path,
                     help="dịch thử từng dòng của file qua đúng quy trình của tool rồi in ra (không đo)")
+    ap.add_argument("--terms", action="store_true",
+                    help="so các cách áp thuật ngữ (PDFTR_NMT_TERMS) trên --try và trên các câu của "
+                         "--src/--ref có chứa thuật ngữ, rồi dừng (không đo tốc độ)")
     ap.add_argument("--json", type=Path, default=Path("benchmark.json"))
     args = ap.parse_args(argv)
 
@@ -132,16 +173,22 @@ def main(argv: list[str] | None = None) -> int:
     settings.device = "cpu"
     res["load_ct2_s"] = round(use_backend(eng, "ct2"), 1)  # chuyển đổi int8 nếu chưa có
 
+    modes = ["off", "codeswitch", "token"] if args.terms else [settings.nmt_terms]
     if args.try_file:
-        from app.pdf_processor import TranslateOptions, build_glossary
-        from app.pipeline import TextTranslator
-
         lines = [x for x in read_lines(args.try_file, None) if x]
-        tr = TextTranslator(eng, build_glossary(TranslateOptions(engine=args.engine)), use_cache=False)
-        for en, vi in zip(lines, tr.translate_texts(lines)):
-            print(f"EN: {en}\nVI: {vi}\n", flush=True)
+        outs = {m: translate_with(eng, args.engine, lines, m) for m in modes}
+        for i, en in enumerate(lines):
+            print(f"EN: {en}", flush=True)
+            for m in modes:
+                print(f"VI[{m}]: {outs[m][i]}" if len(modes) > 1 else f"VI: {outs[m][i]}", flush=True)
+            print(flush=True)
         if not (args.src or args.pdf):
             return 0
+
+    if args.terms:
+        res["terms"] = terms_eval(eng, args.engine, args.src, args.ref, modes)
+        args.json.write_text(json.dumps(res, ensure_ascii=False, indent=2), encoding="utf-8")
+        return 0
 
     if args.src and args.ref:
         src, ref = read_lines(args.src, args.n), read_lines(args.ref, args.n)

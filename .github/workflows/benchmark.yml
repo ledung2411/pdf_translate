@@ -46,20 +46,28 @@ jobs:
       - name: Tải mô hình và chuyển sang CTranslate2 int8 (không tính giờ)
         run: python scripts/convert_ct2.py vinai
 
-      - name: Dịch thử tiêu đề và câu khó
+      - name: So các cách áp thuật ngữ (tắt / codeswitch / token)
         run: |
           cat > try.txt <<'TXT'
           2.2.4 Loss Function Design
           3.6 Computational Efficiency
-          3.1.2 DMRI Preprocessing and DTI Parameter Computation
           2.1 Pseudo-Ground-Truth (pGT) Surface Generation
-          IV. Experimental Results
           We minimize the loss function with stochastic gradient descent.
-          The ABIDE II-NYU dataset includes 52 subjects, acquired on a 3T Siemens Allegra scanner, with acquisition parameters including a b-value of 1000 s/mm², 65 directions, and TR/TE = 5200/78 ms.
+          The learning rate and batch size were tuned on the validation set.
+          We compare a convolutional neural network with a random forest and a support vector machine.
+          The attention mechanism improves feature extraction from the feature map.
+          Results were statistically significant compared with the control group (p < 0.05).
+          Smith et al. reported a lower bound on the time complexity of the algorithm.
+          The covariance matrix is estimated by maximum likelihood estimation.
+          The ground truth surfaces were generated from the training data with transfer learning.
+          The thermal conductivity of the thin film was measured by X-ray diffraction.
           TXT
-          python scripts/benchmark.py --engine vinai --try try.txt | tee -a "$GITHUB_STEP_SUMMARY"
+          python scripts/benchmark.py --engine vinai --terms --try try.txt \
+            --src eng.devtest --ref vie.devtest --json terms.json | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Đo
+        # Đo đầy đủ (~10 phút) khi chạy tay, hoặc khi commit có "[đo]" trong nội dung
+        if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[đo]')
         run: |
           python scripts/benchmark.py --engine vinai \
             --src eng.devtest --ref vie.devtest \
@@ -73,3 +81,4 @@ jobs:
           path: |
             benchmark.json
             benchmark.hyp.txt
+            terms.json

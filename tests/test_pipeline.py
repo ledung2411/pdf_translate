@@ -139,3 +139,63 @@ def test_is_degenerate():
         "We propose a novel framework for cortical surface reconstruction.",
         "Chúng tôi đề xuất một khung mới để tái tạo bề mặt vỏ não.",
     )
+
+
+class TermNMT(NMTEcho):
+    """Giả lập mô hình dịch máy dịch sai thuật ngữ ghép nhưng chép nguyên mã viết tắt."""
+
+    key = "termnmt"
+
+    def __init__(self, drop_tokens=False):
+        super().__init__()
+        self.drop_tokens = drop_tokens
+
+    def translate_batch(self, texts, glossary=None):
+        self.calls.extend(texts)
+        out = []
+        for t in texts:
+            t = re.sub(r"(?i)loss function", "chức năng mất", t)
+            if self.drop_tokens:
+                t = re.sub(r"ZQX[A-Z]", "", t)
+            out.append(f"VI<{t}>")
+        return out
+
+
+def test_nmt_terms_off_by_default_keeps_wrong_term():
+    tr = TextTranslator(TermNMT(), Glossary(load_builtin_glossary()), use_cache=False)
+    (out,) = tr.translate_texts(["We minimize the loss function."])
+    assert "chức năng mất" in out
+
+
+def test_nmt_terms_token_mode(monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "nmt_terms", "token")
+    eng = TermNMT()
+    tr = TextTranslator(eng, Glossary(load_builtin_glossary()), use_cache=False)
+    (out,) = tr.translate_texts(["2.2.4 Loss Function Design", "We minimize the loss function of the matrix."])[:1]
+    assert "Hàm mất mát" in out or "hàm mất mát" in out
+    assert all("loss function" not in c.lower() for c in eng.calls)
+    assert any("ZQXA" in c for c in eng.calls)
+    # Thuật ngữ một từ của bảng mặc định ("matrix") không bị thay
+    assert any("matrix" in c for c in eng.calls)
+
+
+def test_nmt_terms_token_lost_falls_back(monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "nmt_terms", "token")
+    eng = TermNMT(drop_tokens=True)
+    tr = TextTranslator(eng, Glossary(load_builtin_glossary()), use_cache=False)
+    (out,) = tr.translate_texts(["We minimize the loss function."])
+    assert "ZQX" not in out and "chức năng mất" in out  # dịch lại câu gốc, không mất nội dung
+
+
+def test_nmt_terms_codeswitch_mode(monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "nmt_terms", "codeswitch")
+    eng = TermNMT()
+    tr = TextTranslator(eng, Glossary({"loss function": "hàm mất mát", "attention head": "đầu chú ý"}), use_cache=False)
+    (out,) = tr.translate_texts(["Each attention head minimizes the loss function."])
+    assert "hàm mất mát" in out and "đầu chú ý" in out
