@@ -46,6 +46,16 @@ def test_translate_pdf_outputs(sample, tmp_path):
     assert len(vi[0].get_drawings()) == len(pymupdf.open(str(sample))[0].get_drawings())
 
 
+def test_output_size_stays_small(sample, tmp_path):
+    """Font nhúng phải được cắt gọn: trước đây mỗi đoạn nhúng lại cả file font (7 MB → 94 MB)."""
+    out = translate_pdf(sample, tmp_path, TranslateOptions(engine="mock"))
+    src = sample.stat().st_size
+    assert out["translated"].stat().st_size < src
+    assert out["bilingual"].stat().st_size < 1.5 * src
+    fonts = {f[3] for f in pymupdf.open(str(out["translated"]))[0].get_fonts()}
+    assert len(fonts) < 10  # không lặp lại font cho từng đoạn
+
+
 def test_scanned_pdf_rejected(tmp_path):
     doc = pymupdf.open()
     page = doc.new_page()

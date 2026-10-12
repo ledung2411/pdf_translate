@@ -1044,14 +1044,14 @@ def render_outputs(
     stem = re.sub(r"[^\w\-]+", "_", Path(ir.source).stem)[:80] or "document"
     outputs: dict[str, Path] = {}
     path = out_dir / f"{stem}_vi.pdf"
-    doc.save(str(path), garbage=3, deflate=True)
+    save_compact(doc, path)
     outputs["translated"] = path
     if make_bilingual_pdf:
         bi = make_bilingual(
             original, pymupdf.open(str(path)), [p.regions for p in ir.pages] if highlight else None
         )
         p2 = out_dir / f"{stem}_song_ngu.pdf"
-        bi.save(str(p2), garbage=3, deflate=True)
+        save_compact(bi, p2, subset=False)  # font trong bản dịch đã được cắt gọn
         outputs["bilingual"] = p2
     try:
         from .export_docx import build_docx
@@ -1068,6 +1068,21 @@ def render_outputs(
 
 
 IR_FILENAME = "document.json"
+
+
+def save_compact(doc: pymupdf.Document, path: Path, subset: bool = True) -> None:
+    """Lưu PDF gọn nhẹ.
+
+    Mỗi lần ghi một đoạn dịch (insert_htmlbox), PyMuPDF nhúng lại TOÀN BỘ file font → bài
+    19 trang có thể phình từ 7 MB lên ~90 MB. Cắt font chỉ giữ ký tự đã dùng (subset_fonts,
+    cần fonttools) rồi gộp các đối tượng trùng nhau (garbage=4) đưa file về cỡ bản gốc.
+    """
+    if subset:
+        try:
+            doc.subset_fonts()
+        except Exception as e:  # noqa: BLE001  (thiếu fonttools / font lạ → vẫn gộp trùng được)
+            log.info("Không cắt gọn được font (%s) — chỉ gộp font trùng", e)
+    doc.save(str(path), garbage=4, deflate=True, use_objstms=1)
 
 
 def translate_pdf(

@@ -92,9 +92,16 @@ def _add_runs(par, text: str, math_spans: list[str], highlight: bool, base_size:
             run.font.highlight_color = WD_COLOR_INDEX.YELLOW
 
 
-def _crop_png(page: pymupdf.Page, rect: pymupdf.Rect, dpi: int = 200) -> bytes:
+def _crop_png(page: pymupdf.Page, rect: pymupdf.Rect, dpi: int = 150) -> bytes:
+    """Ảnh cắt từ PDF: PNG cho công thức/bảng (nét chữ sắc), JPEG cho hình chụp nếu nhỏ hơn hẳn."""
     clip = pymupdf.Rect(rect) + (-2, -2, 2, 2)
-    return page.get_pixmap(clip=clip & page.rect, dpi=dpi).tobytes("png")
+    pix = page.get_pixmap(clip=clip & page.rect, dpi=dpi)
+    png = pix.tobytes("png")
+    try:
+        jpg = pix.tobytes("jpg", jpg_quality=85)
+    except Exception:  # noqa: BLE001
+        return png
+    return jpg if len(jpg) < 0.6 * len(png) else png
 
 
 def _heading_level(r: Region, body_size: float) -> int | None:
