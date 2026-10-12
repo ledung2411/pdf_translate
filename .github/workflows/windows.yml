@@ -24,11 +24,15 @@ jobs:
         run: .\windows\install.ps1 -NoStart -SkipModels
 
       - name: Kiểm tra shortcut tên tiếng Việt trên Desktop
-        shell: powershell
+        # pwsh (PowerShell 7) đọc script UTF-8 đúng; PowerShell 5.1 sẽ đọc sai tên tiếng Việt
+        shell: pwsh
         run: |
-          $lnk = Join-Path ([Environment]::GetFolderPath("Desktop")) "Dịch PDF khoa học.lnk"
-          if (-not (Test-Path -LiteralPath $lnk)) { Get-ChildItem ([Environment]::GetFolderPath("Desktop")); throw "thiếu shortcut" }
-          $target = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk).TargetPath
+          $desktop = [Environment]::GetFolderPath("Desktop")
+          $lnk = Join-Path $desktop "Dịch PDF khoa học.lnk"
+          if (-not (Test-Path -LiteralPath $lnk)) { Get-ChildItem $desktop; throw "thiếu shortcut" }
+          $tmp = Join-Path $env:TEMP "check.lnk"
+          Copy-Item -LiteralPath $lnk $tmp -Force
+          $target = (New-Object -ComObject WScript.Shell).CreateShortcut($tmp).TargetPath
           Write-Host "Shortcut -> $target"
           if ($target -notlike "*windows\start.bat") { throw "shortcut trỏ sai: $target" }
 
