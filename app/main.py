@@ -44,6 +44,7 @@ DOWNLOAD_NAMES = {
     "translated": ("application/pdf", "_vi.pdf"),
     "bilingual": ("application/pdf", "_song_ngu.pdf"),
     "markdown": ("text/markdown; charset=utf-8", "_vi.md"),
+    "docx": ("application/vnd.openxmlformats-officedocument.wordprocessingml.document", "_vi.docx"),
 }
 
 

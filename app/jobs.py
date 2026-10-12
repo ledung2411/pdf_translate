@@ -116,7 +116,7 @@ class JobManager:
         job = Job(id=job_id, filename=meta.get("filename", "document.pdf"), options=opts,
                   status="done", progress=1.0, message="Hoàn tất", created=meta.get("created", time.time()))
         stem = re.sub(r"[^\w\-]+", "_", Path("input.pdf").stem)
-        for kind, suffix in (("translated", "_vi.pdf"), ("bilingual", "_song_ngu.pdf"), ("markdown", "_vi.md")):
+        for kind, suffix in (("translated", "_vi.pdf"), ("bilingual", "_song_ngu.pdf"), ("markdown", "_vi.md"), ("docx", "_vi.docx")):
             f = d / f"{stem}{suffix}"
             if f.exists():
                 job.outputs[kind] = str(f)

@@ -3,7 +3,7 @@
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 const jobId = new URLSearchParams(location.search).get("job");
-const LABELS = { translated: "PDF tiếng Việt", bilingual: "PDF song ngữ", markdown: "Văn bản (.md)" };
+const LABELS = { translated: "PDF tiếng Việt", bilingual: "PDF song ngữ", docx: "Word (.docx)", markdown: "Văn bản (.md)" };
 
 let regions = [];
 let filter = "doubtful";

@@ -1053,6 +1053,14 @@ def render_outputs(
         p2 = out_dir / f"{stem}_song_ngu.pdf"
         bi.save(str(p2), garbage=3, deflate=True)
         outputs["bilingual"] = p2
+    try:
+        from .export_docx import build_docx
+
+        outputs["docx"] = build_docx(
+            ir, original, out_dir / f"{stem}_vi.docx", highlight=highlight, is_doubtful=is_doubtful
+        )
+    except ImportError:
+        log.info("Chưa cài python-docx — bỏ qua xuất Word")
     p3 = out_dir / f"{stem}_vi.md"
     p3.write_text(blocks_to_markdown([p.regions for p in ir.pages], ir.page_numbers), encoding="utf-8")
     outputs["markdown"] = p3

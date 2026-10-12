@@ -261,7 +261,7 @@ function showJob(job) {
   $("#preview").classList.toggle("hidden", !done);
   if (done && job.id) {
     const kinds = job.downloads || [];
-    for (const k of ["translated", "bilingual", "markdown"]) {
+    for (const k of ["translated", "bilingual", "docx", "markdown"]) {
       const a = $(`#dl-${k}`);
       a.classList.toggle("hidden", !kinds.includes(k));
       a.href = `api/jobs/${job.id}/download/${k}`;
