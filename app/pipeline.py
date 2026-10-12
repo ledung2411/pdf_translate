@@ -56,6 +56,7 @@ _TITLE_FUNCTION_WORDS = {
     "of", "for", "from", "with", "in", "on", "to", "the", "a", "an", "via", "using", "by", "towards",
     "toward", "into", "under", "over", "through", "based", "is", "are",
 }
+_NUMBERED_HEADING_RE = re.compile(r"^(\s*(?:\d+(?:\.\d+)*\.?|[IVX]+\.|[A-Z]\.)\s+)(\S.*)$")
 _LEAD_LABEL_RE = re.compile(r"^(ABSTRACT|Abstract|KEYWORDS|Keywords|Key words|Index Terms)([.:—–\s]+)(?=\S)")
 _SUPERSCRIPT = str.maketrans("0123456789+-−=()n", "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁻⁼⁽⁾ⁿ")
 _ACRONYM_RE = re.compile(r"^(?:[A-Z0-9]{2,}|[a-z]+[A-Z][\w]*|[A-Z][a-z]*[A-Z][\w]*)$")
@@ -79,21 +80,28 @@ def normalize_case(text: str) -> tuple[str, str]:
         low = text.lower()
         return low[:1].upper() + low[1:], "upper"
     words = re.findall(r"[A-Za-z][\w’']*", text)
+    # Tiêu đề mục có đánh số ("2.2.4 Loss Function Design") chắc chắn là tiêu đề, kể cả khi
+    # không có từ chức năng: không chuẩn hóa thì mô hình dịch từng từ ("Thiết kế chức năng mất").
+    def lower_title(t: str) -> str:
+        def lower_word(m: re.Match) -> str:
+            w = m.group(0)
+            if _ACRONYM_RE.match(w) or not (w[0].isupper() and w[1:] == w[1:].lower()):
+                return w
+            return w.lower()
+
+        out = re.sub(r"[A-Za-z][\w’']*", lower_word, t)
+        return out[:1].upper() + out[1:]
+
+    caps_ratio = sum(w[0].isupper() for w in words) / len(words) if words else 0.0
+    numbered = _NUMBERED_HEADING_RE.match(text)
+    if numbered and 2 <= len(words) <= 12 and "," not in text and caps_ratio >= 0.7:
+        return numbered.group(1) + lower_title(numbered.group(2)), "title"
     # Chỉ áp dụng cho tiêu đề ngắn; danh sách địa chỉ/tên riêng (nhiều dấu phẩy) giữ nguyên
     # để không biến "China" thành "china".
     # Tiêu đề hầu như luôn có từ chức năng ("for", "of", "from"...); danh sách tên tác giả thì không.
     has_function_word = any(w.lower() in _TITLE_FUNCTION_WORDS for w in words)
-    if 3 <= len(words) <= 25 and text.count(",") <= 1 and has_function_word:
-        caps = [w for w in words if w[0].isupper()]
-        if len(caps) / len(words) >= 0.7:
-            def lower_word(m: re.Match) -> str:
-                w = m.group(0)
-                if _ACRONYM_RE.match(w) or not (w[0].isupper() and w[1:] == w[1:].lower()):
-                    return w
-                return w.lower()
-
-            out = re.sub(r"[A-Za-z][\w’']*", lower_word, text)
-            return out[:1].upper() + out[1:], "title"
+    if 3 <= len(words) <= 25 and text.count(",") <= 1 and has_function_word and caps_ratio >= 0.7:
+        return lower_title(text), "title"
     return text, ""
 
 
@@ -101,7 +109,8 @@ def restore_case(text: str, mode: str) -> str:
     if mode == "upper":
         return text.upper()
     if mode == "title":
-        return text[:1].upper() + text[1:]
+        # Viết hoa chữ cái đầu tiên (bỏ qua số mục "2.2.4 " đứng trước).
+        return re.sub(r"^([\d.\s]*)(\w)", lambda m: m.group(1) + m.group(2).upper(), text, count=1)
     return text
 
 
