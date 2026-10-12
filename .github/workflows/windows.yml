@@ -21,7 +21,20 @@ jobs:
 
       - name: Cài đặt bằng windows/install.ps1 (bỏ qua tải mô hình)
         shell: powershell
-        run: .\windows\install.ps1 -NoShortcut -NoStart -SkipModels
+        run: .\windows\install.ps1 -NoStart -SkipModels
+
+      - name: Kiểm tra shortcut tên tiếng Việt trên Desktop
+        shell: powershell
+        run: |
+          $lnk = Join-Path ([Environment]::GetFolderPath("Desktop")) "Dịch PDF khoa học.lnk"
+          if (-not (Test-Path -LiteralPath $lnk)) { Get-ChildItem ([Environment]::GetFolderPath("Desktop")); throw "thiếu shortcut" }
+          $target = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk).TargetPath
+          Write-Host "Shortcut -> $target"
+          if ($target -notlike "*windows\start.bat") { throw "shortcut trỏ sai: $target" }
+
+      - name: Chạy lại bộ cài (phải không lỗi khi đã cài)
+        shell: powershell
+        run: .\windows\install.ps1 -NoStart -SkipModels
 
       - name: Dịch thử PDF mẫu (engine giả lập)
         shell: powershell

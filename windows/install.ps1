@@ -69,6 +69,20 @@ Step "Cài thư viện (lần đầu mất vài phút)"
 & $VenvPy -m pip install -r requirements.txt -r requirements-ml.txt
 if ($LASTEXITCODE -ne 0) { Fail "Cài thư viện thất bại (kiểm tra kết nối Internet)" }
 
+# Mô hình đã chuyển đổi sẵn (chạy lại bộ cài) → không cần tải torch / chuyển lại
+$Pending = @()
+foreach ($m in $Models.Split(",")) {
+    $m = $m.Trim()
+    $ready = $false
+    try {
+        & $VenvPy -c "import sys; from app.translators import get_engine; sys.exit(0 if get_engine('$m')._ct2_ready() else 1)"
+        $ready = ($LASTEXITCODE -eq 0)
+    } catch {}
+    if ($ready) { Write-Host "Mô hình '$m' đã sẵn sàng, bỏ qua." } else { $Pending += $m }
+}
+if ($Pending.Count -eq 0) { $SkipModels = $true }
+$Models = $Pending -join ","
+
 if (-not $SkipModels) {
     Step "Cài torch bản CPU (chỉ dùng để chuyển đổi mô hình một lần)"
     & $VenvPy -m pip install torch --index-url https://download.pytorch.org/whl/cpu
@@ -92,13 +106,29 @@ if ($LASTEXITCODE -ne 0 -and -not $SkipModels) { Write-Host "Có cảnh báo ở
 
 if (-not $NoShortcut) {
     Step "Tạo shortcut trên Desktop"
-    $Shell = New-Object -ComObject WScript.Shell
-    $Lnk = $Shell.CreateShortcut((Join-Path ([Environment]::GetFolderPath("Desktop")) "Dịch PDF khoa học.lnk"))
-    $Lnk.TargetPath = Join-Path $Root "windows\start.bat"
-    $Lnk.WorkingDirectory = $Root
-    $Lnk.IconLocation = "$env:SystemRoot\System32\shell32.dll,70"
-    $Lnk.Description = "Dịch PDF khoa học Anh -> Việt (chạy trên máy)"
-    $Lnk.Save()
+    try {
+        $Desktop = [Environment]::GetFolderPath("Desktop")
+        # WScript.Shell không ghi được tên file Unicode ("Dịch" -> "D?ch") nên tạo với tên
+        # không dấu rồi đổi tên bằng PowerShell (hỗ trợ Unicode).
+        $Tmp = Join-Path $Desktop "PDF-Translate-tmp.lnk"
+        $Shell = New-Object -ComObject WScript.Shell
+        $Lnk = $Shell.CreateShortcut($Tmp)
+        $Lnk.TargetPath = Join-Path $Root "windows\start.bat"
+        $Lnk.WorkingDirectory = $Root
+        $Lnk.IconLocation = "$env:SystemRoot\System32\shell32.dll,70"
+        $Lnk.Description = "Dich PDF khoa hoc Anh - Viet (chay tren may)"
+        $Lnk.Save()
+        $Final = Join-Path $Desktop "Dịch PDF khoa học.lnk"
+        try {
+            Move-Item -LiteralPath $Tmp -Destination $Final -Force
+        } catch {
+            $Final = Join-Path $Desktop "Dich PDF khoa hoc.lnk"
+            Move-Item -LiteralPath $Tmp -Destination $Final -Force
+        }
+        Write-Host "Đã tạo shortcut: $Final"
+    } catch {
+        Write-Host "Không tạo được shortcut ($($_.Exception.Message)). Mở tool bằng windows\start.bat" -ForegroundColor Yellow
+    }
 }
 
 Write-Host ""
