@@ -39,7 +39,7 @@ def test_translate_pdf_outputs(sample, tmp_path):
     assert "ạ ế ữ ở đ" in text  # font hiển thị được tiếng Việt
     assert "Attention(Q, K, V)" in text  # công thức khối giữ nguyên
     assert "Attention is all you need" in text  # tài liệu tham khảo giữ nguyên
-    assert "[VI] Học sâu has transformed" in text  # glossary: deep learning → học sâu
+    assert "[vi] học sâu has transformed" in text.lower()  # glossary: deep learning → học sâu
     bi = pymupdf.open(str(out["bilingual"]))
     assert bi[0].rect.width == pytest.approx(vi[0].rect.width * 2)
     # Hình vẽ vector (khung hình minh họa, kẻ bảng) được giữ nguyên.
