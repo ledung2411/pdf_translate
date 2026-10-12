@@ -7,3 +7,6 @@ venv/
 /output/
 *.egg-info/
 .DS_Store
+
+# PDF riêng để kiểm thử, không đưa lên git
+tests/corpus/local/

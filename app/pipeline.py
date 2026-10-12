@@ -24,8 +24,8 @@ from .translators import Translator, get_cache
 log = logging.getLogger(__name__)
 
 # Ký tự đánh dấu do pdf_processor chèn quanh span công thức / chỉ số trên.
-MATH_START, MATH_END = "", ""
-SUP_START, SUP_END = "", ""
+MATH_START, MATH_END = "\ue000", "\ue001"
+SUP_START, SUP_END = "\ue002", "\ue003"
 _MARKED_RE = re.compile(f"{MATH_START}(.*?){MATH_END}|{SUP_START}(.*?){SUP_END}", re.S)
 
 ProgressFn = Callable[[int, int], None]
