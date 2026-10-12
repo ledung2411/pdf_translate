@@ -21,6 +21,12 @@ lên dịch vụ bên ngoài.
 - **3 dạng kết quả**: PDF tiếng Việt, PDF song ngữ (gốc | dịch cạnh nhau), văn bản Markdown.
 - **Nhanh trên CPU**: mô hình chạy bằng CTranslate2 int8 (nhanh hơn, ít RAM, không cần torch khi dịch).
 - **Không in ra rác**: câu dịch bị lặp/hỏng được dịch lại từng vế; vẫn hỏng thì giữ tiếng Anh và gắn cờ.
+- **Chấm điểm từng câu & tô vàng đoạn nghi ngờ**: mất số liệu/trích dẫn, sót tiếng Anh, sai thuật ngữ, độ dài
+  bất thường… Đoạn điểm thấp được tô vàng trong PDF (chú thích, ẩn được khi in) kèm lý do.
+- **LLM cục bộ sửa có chọn lọc**: nếu Ollama/llama.cpp/LM Studio đang chạy, chỉ những câu điểm thấp nhất
+  (tối đa 30%) được LLM hiệu đính — chất lượng tăng mà không chậm như dịch toàn bộ bằng LLM.
+- **Trang sửa bản dịch**: xem song song Anh – Việt, lọc đoạn nghi ngờ, sửa rồi dựng lại PDF ngay; chỗ sửa được
+  lưu vào **bộ nhớ dịch** và tự dùng lại ở những lần dịch sau.
 - Có ô **dịch nhanh đoạn văn**, bộ nhớ đệm bản dịch (dịch lại tài liệu cũ rất nhanh), hàng đợi công việc,
   thanh tiến độ, xem trước PDF ngay trên trình duyệt.
 
@@ -99,6 +105,9 @@ Rồi chọn engine **LLM cục bộ** trên giao diện. Mọi server có API t
 | `PDFTR_MAX_UPLOAD_MB` / `PDFTR_MAX_PAGES` | `100` / `500` | Giới hạn kích thước |
 | `PDFTR_JOB_TTL_HOURS` | `24` | Tự xoá kết quả cũ sau số giờ này |
 | `PDFTR_FONT_SERIF` / `PDFTR_FONT_SANS` | tự tìm | Đường dẫn font TTF có dấu tiếng Việt |
+| `PDFTR_QE_THRESHOLD` | `0.6` | Dưới ngưỡng này đoạn bị coi là nghi ngờ (tô vàng, gửi LLM sửa) |
+| `PDFTR_POSTEDIT_MAX_RATIO` | `0.3` | Tỉ lệ câu tối đa được LLM sửa |
+| `PDFTR_QE_BACKTRANS` | `0` | `1` = chấm điểm thêm bằng dịch ngược Việt→Anh (`PDFTR_BACKTRANS_MODEL`, mặc định opus-mt-vi-en) |
 | `PDFTR_LLM_BASE_URL` | `http://localhost:11434/v1` | Địa chỉ LLM tự host |
 | `PDFTR_LLM_MODEL` | `qwen2.5:7b` | Tên mô hình LLM |
 | `PDFTR_VINAI_MODEL` / `PDFTR_OPUS_MODEL` / `PDFTR_NLLB_MODEL` | | Đổi sang mô hình/đường dẫn khác |

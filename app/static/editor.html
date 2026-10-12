@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sửa bản dịch</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="top">
+    <div class="wrap">
+      <p class="sub"><a href="./">← Quay lại trang dịch</a></p>
+      <h1>Sửa bản dịch</h1>
+      <p id="doc-info" class="sub">Đang tải...</p>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <div class="card toolbar">
+      <div class="seg" role="tablist">
+        <button class="seg-btn active" data-filter="doubtful">Nghi ngờ <span id="n-doubtful"></span></button>
+        <button class="seg-btn" data-filter="all">Tất cả <span id="n-all"></span></button>
+        <button class="seg-btn" data-filter="edited">Đã sửa <span id="n-edited"></span></button>
+      </div>
+      <input id="search" type="search" placeholder="Tìm trong tiếng Anh hoặc tiếng Việt..." />
+    </div>
+    <p class="muted hint">Sửa trực tiếp ô tiếng Việt. Chỉ số trên viết dạng <code>^{2}</code>. Đoạn đã sửa được lưu vào
+      <b>bộ nhớ dịch</b> và tự dùng lại ở những lần dịch sau.</p>
+
+    <div id="list"></div>
+    <p id="empty" class="muted hidden">Không có đoạn nào phù hợp.</p>
+  </main>
+
+  <div class="savebar">
+    <div class="wrap row between">
+      <span id="save-state" class="muted">Chưa có thay đổi</span>
+      <div class="row">
+        <span id="downloads" class="row"></span>
+        <button id="save" class="btn primary" disabled>Lưu &amp; dựng lại PDF</button>
+      </div>
+    </div>
+  </div>
+  <script src="editor.js"></script>
+</body>
+</html>

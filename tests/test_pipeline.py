@@ -112,6 +112,7 @@ def test_upper_and_title_case_normalized_for_nmt():
     assert eng.calls[1] == "DDSurfer: a weakly-supervised framework for cortical surface reconstruction from diffusion MRI"
     assert "China, Chengdu" in eng.calls[2]  # tên riêng không bị viết thường
     assert out[3].startswith("TÓM TẮT VI<Cortical")
+    assert tr.translate_texts(["Jane Doe, John Smith, Alan Turing"]) == ["VI<Jane Doe, John Smith, Alan Turing>"]
 
 
 def test_degenerate_output_is_repaired_or_kept_english():

@@ -5,7 +5,10 @@ PDF ─▶ ① Tiếp nhận ─▶ ② Phân tích bố cục ─▶ ③ DocIR 
                                                 │
    ┌────────────────────────────────────────────┘
    ▼
-④ Thuật ngữ ─▶ ⑤ Tách câu ─▶ ⑥ Dịch ─▶ ⑦ Kiểm tra ─▶ ⑧ Dựng (PDF / song ngữ / MD)
+④ Thuật ngữ ─▶ ⑤ Tách câu ─▶ ⑥ Dịch ─▶ ⑦ Chấm điểm ─▶ ⑧ Dựng (PDF / song ngữ / MD) ─▶ ⑨ Sửa tay
+                                     ▲          │ câu điểm thấp            tô vàng đoạn nghi ngờ      │
+                                     │          └─▶ LLM hiệu đính                                    │
+                                     └──────────── bộ nhớ dịch (TM) ◀──────────────────────────────┘
   mặc định       nối dòng      TM/cache   lặp, rác,       xóa chữ gốc,
   + của bài      hoa/thường    NMT ct2    độ dài          ghi bản dịch,
   + của bạn      span công     LLM        → dịch lại      giữ hình & nét vẽ
@@ -31,6 +34,9 @@ PDF ─▶ ① Tiếp nhận ─▶ ② Phân tích bố cục ─▶ ③ DocIR 
 | `app/pdf_processor.py` | `analyze_pdf` (trích & phân loại vùng, tách cột), `translate_document`, `render_outputs` |
 | `app/scientific.py` | Bảo vệ ký hiệu, glossary, tách câu, nhận diện tiêu đề, phân loại khối |
 | `app/terms.py` | Tự trích thuật ngữ của bài |
+| `app/quality.py` | Chấm điểm bản dịch từng câu (QE), phát hiện bản dịch hỏng |
+| `app/tm.py` | Bộ nhớ dịch: đoạn đã sửa tay được dùng lại ở lần dịch sau |
+| `app/static/editor.*` | Trang sửa bản dịch song ngữ |
 | `app/pipeline.py` | `TextTranslator`: chuẩn hóa, cache, dịch theo lô, kiểm tra & sửa bản dịch hỏng |
 | `app/translators.py` | Engine: `HFSeq2SeqTranslator` (backend ct2 / hf), `LLMTranslator`, cache SQLite |
 | `app/main.py`, `app/jobs.py` | Web API + hàng đợi công việc |
@@ -39,7 +45,7 @@ PDF ─▶ ① Tiếp nhận ─▶ ② Phân tích bố cục ─▶ ③ DocIR 
 ## Lộ trình
 
 - [x] **P1** — DocIR; CTranslate2 int8; tự trích thuật ngữ; bộ PDF kiểm thử nhiều nhà xuất bản
-- [ ] **P2** — Chấm điểm chất lượng từng câu (QE dịch ngược) + LLM sửa có chọn lọc câu điểm thấp; tô vàng câu
-  nghi ngờ; trang biên tập song ngữ + bộ nhớ dịch (TM)
+- [x] **P2** — Chấm điểm chất lượng từng câu (luật + tùy chọn dịch ngược chrF) + LLM sửa có chọn lọc câu điểm
+  thấp; tô vàng câu nghi ngờ; trang biên tập song ngữ + bộ nhớ dịch (TM)
 - [ ] **P3** — Nhận diện bố cục bằng mô hình (DocLayout-YOLO); giữ công thức dạng vector; OCR; xuất DOCX/HTML;
   bản cài đặt 1 click cho Windows

@@ -125,3 +125,25 @@ th { position: sticky; top: 0; background: var(--card); }
 .terms td.num { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
 .badge { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 99px; background: var(--accent-soft); color: var(--accent); margin-left: 6px; }
 .quality { margin-top: 12px; padding: 10px 12px; border-radius: 8px; background: var(--accent-soft); }
+
+/* ---------- Trang sửa bản dịch ---------- */
+.toolbar { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; padding: 12px 14px; }
+.toolbar input[type=search] { flex: 1; min-width: 200px; max-width: 420px; }
+.hint { margin: 0 0 12px; font-size: 13px; }
+.seg-card { padding: 14px; margin-bottom: 10px; }
+.seg-card.doubtful { border-left: 4px solid #e6b800; }
+.seg-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; font-size: 13px; }
+.seg-card .src { font-size: 14px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.seg-card textarea { min-height: 70px; overflow: hidden; }
+.seg-card .actions { margin-top: 6px; }
+.notes { font-size: 12px; }
+.pill { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 99px; background: var(--accent-soft); color: var(--accent); }
+.pill.warn { background: #fff4c2; color: #8a6d00; }
+.pill.ok { background: #e3f6e8; color: var(--ok); }
+@media (prefers-color-scheme: dark) {
+  .pill.warn { background: #3d3410; color: #f5d76e; }
+  .pill.ok { background: #13301c; color: #6fdc8c; }
+}
+.btn.small { padding: 5px 10px; font-size: 13px; }
+.savebar { position: sticky; bottom: 0; background: var(--card); border-top: 1px solid var(--border); padding: 10px 0; margin-top: 16px; }
+.savebar .row { flex-wrap: wrap; }

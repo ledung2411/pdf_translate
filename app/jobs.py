@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import queue
+import re
 import shutil
 import threading
 import time
@@ -86,6 +88,8 @@ class JobManager:
         job = Job(id=uuid.uuid4().hex[:12], filename=filename, options=options)
         job.dir.mkdir(parents=True, exist_ok=True)
         job.input_path.write_bytes(data)
+        meta = {"filename": filename, "created": job.created, "options": asdict(options)}
+        (job.dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
         with self._lock:
             self.jobs[job.id] = job
         self._q.put(job.id)
@@ -93,7 +97,34 @@ class JobManager:
         return job
 
     def get(self, job_id: str) -> Job | None:
-        return self.jobs.get(job_id)
+        job = self.jobs.get(job_id)
+        if job is None and re.fullmatch(r"[0-9a-f]{12}", job_id):
+            job = self._restore(job_id)
+        return job
+
+    def _restore(self, job_id: str) -> Job | None:
+        """Nạp lại job đã hoàn tất từ đĩa (sau khi khởi động lại server)."""
+        d = settings.data_dir / "jobs" / job_id
+        meta_path, ir_path = d / "meta.json", d / IR_FILENAME
+        if not (meta_path.exists() and ir_path.exists() and (d / "input.pdf").exists()):
+            return None
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            opts = TranslateOptions(**meta.get("options", {}))
+        except Exception:  # noqa: BLE001
+            return None
+        job = Job(id=job_id, filename=meta.get("filename", "document.pdf"), options=opts,
+                  status="done", progress=1.0, message="Hoàn tất", created=meta.get("created", time.time()))
+        stem = re.sub(r"[^\w\-]+", "_", Path("input.pdf").stem)
+        for kind, suffix in (("translated", "_vi.pdf"), ("bilingual", "_song_ngu.pdf"), ("markdown", "_vi.md")):
+            f = d / f"{stem}{suffix}"
+            if f.exists():
+                job.outputs[kind] = str(f)
+        job.summary = quality_summary(ir_path)
+        job.finished = ir_path.stat().st_mtime
+        with self._lock:
+            self.jobs[job_id] = job
+        return job
 
     def queue_position(self, job: Job) -> int:
         waiting = sorted((j for j in self.jobs.values() if j.status == "queued"), key=lambda j: j.created)

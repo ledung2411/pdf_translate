@@ -34,6 +34,7 @@ from .scientific import (
     looks_mathy,
     parse_glossary,
 )
+from .tm import get_tm
 from .translators import TranslatorError, get_engine
 
 log = logging.getLogger(__name__)
@@ -56,6 +57,7 @@ class TranslateOptions:
     make_bilingual: bool = True
     post_edit: bool = True  # dùng LLM cục bộ (nếu đang chạy) sửa các câu điểm thấp
     highlight_doubtful: bool = True  # tô vàng đoạn nghi ngờ trong PDF
+    use_tm: bool = True  # dùng bản dịch đã duyệt trong bộ nhớ dịch (TM)
 
 
 # Khối văn bản = vùng trong DocIR (giữ tên cũ cho dễ đọc).
@@ -746,6 +748,20 @@ def _back_translator():
 def translate_document(ir: Document, opts: TranslateOptions, report: ProgressFn) -> None:
     """Tầng dịch: điền ``translation`` cho các vùng văn bản trong DocIR."""
     to_translate = [r for r in ir.regions if r.kind == "text"]
+    if to_translate and opts.use_tm:
+        hits = get_tm().lookup([r.plain for r in to_translate])
+        for r in to_translate:
+            if r.plain in hits:
+                r.translation, r.score = hits[r.plain], 1.0
+                r.flags.append("tm")
+        if hits:
+            log.info("Bộ nhớ dịch: dùng lại %d đoạn đã duyệt", sum(1 for r in to_translate if "tm" in r.flags))
+            report(0.02, f"Dùng lại {len(hits)} đoạn đã duyệt từ bộ nhớ dịch")
+        pending = [r for r in to_translate if "tm" not in r.flags]
+        if not pending:
+            ir.engine = opts.engine
+            return
+        to_translate = pending
     if not to_translate:
         raise PdfError(
             f"Không tìm thấy đoạn văn nào cần dịch (phân loại khối: {ir.stats()}). "

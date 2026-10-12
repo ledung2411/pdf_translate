@@ -52,6 +52,10 @@ class _Unit:
     result: str | None = None
 
 
+_TITLE_FUNCTION_WORDS = {
+    "of", "for", "from", "with", "in", "on", "to", "the", "a", "an", "via", "using", "by", "towards",
+    "toward", "into", "under", "over", "through", "based", "is", "are",
+}
 _LEAD_LABEL_RE = re.compile(r"^(ABSTRACT|Abstract|KEYWORDS|Keywords|Key words|Index Terms)([.:—–\s]+)(?=\S)")
 _SUPERSCRIPT = str.maketrans("0123456789+-−=()n", "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁻⁼⁽⁾ⁿ")
 _ACRONYM_RE = re.compile(r"^(?:[A-Z0-9]{2,}|[a-z]+[A-Z][\w]*|[A-Z][a-z]*[A-Z][\w]*)$")
@@ -77,7 +81,9 @@ def normalize_case(text: str) -> tuple[str, str]:
     words = re.findall(r"[A-Za-z][\w’']*", text)
     # Chỉ áp dụng cho tiêu đề ngắn; danh sách địa chỉ/tên riêng (nhiều dấu phẩy) giữ nguyên
     # để không biến "China" thành "china".
-    if 3 <= len(words) <= 25 and text.count(",") <= 1:
+    # Tiêu đề hầu như luôn có từ chức năng ("for", "of", "from"...); danh sách tên tác giả thì không.
+    has_function_word = any(w.lower() in _TITLE_FUNCTION_WORDS for w in words)
+    if 3 <= len(words) <= 25 and text.count(",") <= 1 and has_function_word:
         caps = [w for w in words if w[0].isupper()]
         if len(caps) / len(words) >= 0.7:
             def lower_word(m: re.Match) -> str:
