@@ -12,11 +12,15 @@ lên dịch vụ bên ngoài.
   - Bảo vệ công thức toán (nhận diện font LaTeX: CMMI, CMSY, MSBM…), ký hiệu Hy Lạp, biểu thức như
     `p < 0.05`, `y = Wx + b`, trích dẫn `[1, 3]`, URL, DOI, arXiv ID, email, tên hàm/biến trong mã nguồn.
   - Bảng thuật ngữ gần 200 mục (Toán, Thống kê, AI/ML, Vật lý, Hóa, Y sinh) để dịch nhất quán; tự thêm thuật ngữ riêng.
+  - **Tự trích thuật ngữ của bài** trước khi dịch: định nghĩa viết tắt (`diffusion MRI (dMRI)`), tên phương
+    pháp/phần mềm lặp lại, cụm chuyên ngành (`cortical surface reconstruction`) — duyệt và điền bản dịch ngay trên giao diện.
   - Dịch chuẩn tiêu đề mục (Abstract → Tóm tắt, Related Work → Các công trình liên quan…) và nhãn
     (Fig. 3 → Hình 3, Table 2 → Bảng 2, Eq. (1) → Phương trình (1), et al. → và cộng sự).
   - Giữ nguyên mục **Tài liệu tham khảo** (tùy chọn), bỏ qua bảng số liệu, mã nguồn, watermark xoay của arXiv.
   - Tách câu thông minh (không cắt sai ở `et al.`, `e.g.`, `Fig.`…), nối lại từ bị ngắt dòng bằng gạch nối.
 - **3 dạng kết quả**: PDF tiếng Việt, PDF song ngữ (gốc | dịch cạnh nhau), văn bản Markdown.
+- **Nhanh trên CPU**: mô hình chạy bằng CTranslate2 int8 (nhanh hơn, ít RAM, không cần torch khi dịch).
+- **Không in ra rác**: câu dịch bị lặp/hỏng được dịch lại từng vế; vẫn hỏng thì giữ tiếng Anh và gắn cờ.
 - Có ô **dịch nhanh đoạn văn**, bộ nhớ đệm bản dịch (dịch lại tài liệu cũ rất nhanh), hàng đợi công việc,
   thanh tiến độ, xem trước PDF ngay trên trình duyệt.
 
@@ -107,12 +111,16 @@ diện (được ưu tiên hơn bảng mặc định) hoặc truyền file qua `
 
 ## Cách hoạt động
 
-1. **Phân tích PDF** (PyMuPDF): lấy từng khối văn bản cùng font, cỡ chữ, màu, vị trí; gộp các khối bị tách giữa câu.
-2. **Phân loại khối**: đoạn văn / công thức / bảng / mã nguồn / tài liệu tham khảo / chữ xoay.
-3. **Bảo vệ**: công thức, ký hiệu, trích dẫn, URL… và thuật ngữ được thay bằng placeholder `{n}`.
-4. **Dịch** từng câu theo lô; nếu mô hình làm mất placeholder thì tự dịch lại từng phần giữa các placeholder.
-5. **Khôi phục** placeholder, xóa chữ gốc (giữ hình và nét vẽ) và ghi bản dịch vào đúng khung cũ bằng font
-   hỗ trợ tiếng Việt.
+Chi tiết: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+1. **Phân tích** (PyMuPDF) → **DocIR**: từng vùng chữ kèm font, cỡ chữ, vị trí, loại vùng (đoạn văn / công thức /
+   bảng / mã nguồn / tài liệu tham khảo / chữ xoay); tách lại các cột bị gộp. DocIR được lưu thành `document.json`.
+2. **Thuật ngữ**: bảng mặc định + thuật ngữ tự trích của bài + thuật ngữ của bạn.
+3. **Tách câu & chuẩn hóa**: nối dòng, sửa gạch nối, đưa chữ IN HOA/Viết Hoa về dạng câu.
+4. **Dịch** theo lô (cache SQLite). Mô hình dịch máy nhận câu thuần (công thức, trích dẫn giữ nguyên trong câu);
+   LLM nhận placeholder `{n}` và thuật ngữ trong prompt.
+5. **Kiểm tra**: phát hiện câu lặp/hỏng → dịch lại từng vế → vẫn hỏng thì giữ tiếng Anh.
+6. **Dựng**: xóa chữ gốc (giữ hình và nét vẽ), ghi bản dịch vào đúng khung cũ bằng font có dấu tiếng Việt.
 
 ## Không dịch được? Tự chẩn đoán
 
@@ -148,6 +156,10 @@ pytest
 python tests/make_sample_pdf.py sample.pdf
 PDFTR_ENABLE_MOCK=1 python -m app.cli sample.pdf -e mock   # thử bố cục không cần mô hình
 ```
+
+**Bộ PDF kiểm thử** (`tests/test_corpus.py`): 5 tài liệu mô phỏng LaTeX/arXiv, Wiley, IEEE, một cột, Elsevier
+kèm đáp án phân tích. PDF thật của bạn đặt vào `tests/corpus/local/` (không đưa lên git) sẽ được kiểm tra tự
+động; có thể kèm `<tên>.expect.json` (định dạng như `expect` trong `tests/corpus/docs.py`).
 
 ## Giấy phép các thành phần
 
