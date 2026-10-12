@@ -3,7 +3,7 @@ name: Windows
 
 on:
   push:
-    branches: [main, "claude/**"]
+      branches: [main]
     tags: ["v*"]
   workflow_dispatch:
 
