@@ -29,6 +29,11 @@ class Settings:
     max_pages: int = int(os.environ.get("PDFTR_MAX_PAGES", "500"))
     job_ttl_hours: float = float(os.environ.get("PDFTR_JOB_TTL_HOURS", "24"))
     enable_mock: bool = _env_bool("PDFTR_ENABLE_MOCK", False)
+    # Chấm điểm chất lượng & sửa câu kém bằng LLM cục bộ
+    qe_threshold: float = float(os.environ.get("PDFTR_QE_THRESHOLD", "0.6"))
+    postedit_max_ratio: float = float(os.environ.get("PDFTR_POSTEDIT_MAX_RATIO", "0.3"))
+    qe_backtrans: bool = _env_bool("PDFTR_QE_BACKTRANS", False)
+    backtrans_model: str = os.environ.get("PDFTR_BACKTRANS_MODEL", "Helsinki-NLP/opus-mt-vi-en")
     # Font TTF hỗ trợ tiếng Việt (tùy chọn). Mặc định tự tìm font hệ thống / Noto.
     font_serif: str = os.environ.get("PDFTR_FONT_SERIF", "")
     font_sans: str = os.environ.get("PDFTR_FONT_SANS", "")

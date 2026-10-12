@@ -183,6 +183,9 @@ def test_llm_translator_openai_compatible(monkeypatch):
         assert out == ["Mạng {0} hội tụ."]
         user_msg = seen["req"]["messages"][1]["content"]
         assert "neural network: mạng nơ-ron" in user_msg and "The {0} network converges." in user_msg
+        assert t.post_edit("The network converges.", "Mạng hội tụ.", {"network": "mạng"}) == "Mạng {0} hội tụ."
+        pe = seen["req"]["messages"]
+        assert "hiệu đính" in pe[0]["content"] and "Bản dịch máy" in pe[1]["content"] and "network: mạng" in pe[1]["content"]
     finally:
         srv.shutdown()
 

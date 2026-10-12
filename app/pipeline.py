@@ -19,6 +19,7 @@ from .scientific import (
     translate_heading,
 )
 from .config import settings
+from .quality import QE, chrf, combine, is_degenerate, rule_score
 from .translators import Translator, get_cache
 
 log = logging.getLogger(__name__)
@@ -98,30 +99,6 @@ def restore_case(text: str, mode: str) -> str:
     return text
 
 
-def is_degenerate(src: str, out: str) -> bool:
-    """Phát hiện bản dịch hỏng: lặp vô hạn, toàn gạch dưới, dài bất thường."""
-    if not out.strip():
-        return True
-    if "___" in out or len(out) > 3 * len(src) + 40:
-        return True
-    words = out.split()
-    # Một từ lặp liền 3 lần ("model model model") gần như chắc chắn là lỗi sinh lặp.
-    run = 1
-    for a, b in zip(words, words[1:]):
-        run = run + 1 if a.lower() == b.lower() and any(c.isalpha() for c in a) else 1
-        if run >= 3:
-            return True
-    if len(words) >= 6:
-        for n in (2, 3, 4):
-            grams = [tuple(w.lower() for w in words[i : i + n]) for i in range(len(words) - n + 1)]
-            if grams and max(grams.count(g) for g in set(grams)) >= 4 and len(words) < 12 * n:
-                return True
-            for i in range(len(grams) - 2 * n):
-                if grams[i] == grams[i + n] == grams[i + 2 * n]:
-                    return True
-    if len(words) > 15 and len({w.lower() for w in words}) / len(words) < 0.3:
-        return True
-    return False
 
 
 def postprocess_vi(text: str) -> str:
@@ -132,16 +109,40 @@ def postprocess_vi(text: str) -> str:
     text = re.sub(r"([(\[]) ", r"\1", text)
     return text.strip()
 
+_EN_FUNCTION_WORDS = set(
+    """the of and is are was were with for that this which these those from by into than then
+    have has had been being will would should could can may might not but also such their our we they
+    it its as at on in to an or if when while where whose because however therefore""".split()
+)
+_NUM_RE = re.compile(r"\d+(?:[.,]\d+)*")
+_CITE_RE = re.compile(r"\[\s*\d+(?:\s*[-–,]\s*\d+)*\s*\]")
+
 
 class TextTranslator:
     """Dịch danh sách đoạn văn khoa học bằng một engine bất kỳ."""
 
-    def __init__(self, engine: Translator, glossary: Glossary | None = None, use_cache: bool = True):
+    def __init__(
+        self,
+        engine: Translator,
+        glossary: Glossary | None = None,
+        use_cache: bool = True,
+        post_editor: Translator | None = None,
+        back_translator: Translator | None = None,
+        status: Callable[[str], None] | None = None,
+    ):
         self.engine = engine
         self.glossary = glossary if glossary is not None and len(glossary) else None
         self.cache = get_cache() if use_cache else None
-        # Sau mỗi lần translate_texts: đoạn nào có câu phải giữ tiếng Anh (bản dịch hỏng).
-        self.kept_english: list[bool] = []
+        # LLM sửa lại các câu bị chấm điểm thấp (chỉ dùng khi engine chính là mô hình dịch máy).
+        self.post_editor = post_editor if post_editor is not None and post_editor is not engine else None
+        # Mô hình Việt→Anh để chấm điểm bằng dịch ngược (tùy chọn).
+        self.back_translator = back_translator
+        self.status = status
+        # Kết quả theo từng đoạn của lần translate_texts gần nhất:
+        self.kept_english: list[bool] = []  # có câu phải giữ tiếng Anh (bản dịch hỏng)
+        self.scores: list[float] = []  # điểm chất lượng thấp nhất trong đoạn (0..1)
+        self.reasons: list[list[str]] = []  # lý do bị trừ điểm
+        self.post_edited: list[bool] = []
         self._kept: set[str] = set()
 
     # -- chuẩn bị ----------------------------------------------------------
@@ -301,7 +302,13 @@ class TextTranslator:
             if progress:
                 progress(done, total)
 
+        seg_qe = self._score_all(all_segs, results)
+        edited = self._post_edit(all_segs, results, seg_qe) if self.post_editor else set()
+
         self.kept_english = [any(s in self._kept for s in u.segments) for u in units]
+        self.scores = [min((seg_qe[s].score for s in u.segments), default=1.0) for u in units]
+        self.reasons = [sorted({r for s in u.segments for r in seg_qe[s].reasons}) for u in units]
+        self.post_edited = [any(s in edited for s in u.segments) for u in units]
         out = []
         for u in units:
             if u.result is None:
@@ -312,6 +319,52 @@ class TextTranslator:
                     u.result = self._fix_terms(u.result)
             out.append(postprocess_vi(u.result))
         return out
+
+    # -- chất lượng ---------------------------------------------------------
+
+    def _qe(self, src: str, out: str, back: str | None = None) -> QE:
+        src_c = PLACEHOLDER_RE.sub(" ", src)
+        out_c = PLACEHOLDER_RE.sub(" ", out)
+        if not self.engine.supports_placeholders:
+            out_c = self._fix_terms(out_c)
+        rule = rule_score(src_c, out_c, self.glossary)
+        return combine(rule, chrf(back, src_c) if back is not None else None)
+
+    def _score_all(self, segs: list[str], results: dict[str, str]) -> dict[str, QE]:
+        backs: dict[str, str] = {}
+        if self.back_translator is not None and segs:
+            if self.status:
+                self.status("Đang chấm điểm bản dịch (dịch ngược)...")
+            outs = [results.get(s, s) for s in segs]
+            try:
+                backs = dict(zip(segs, self.back_translator.translate_batch(outs)))
+            except Exception as e:  # noqa: BLE001  (chấm điểm là phụ, không làm hỏng cả job)
+                log.warning("Không dịch ngược được để chấm điểm: %s", e)
+        return {s: self._qe(s, results.get(s, s), backs.get(s)) for s in segs}
+
+    def _post_edit(self, segs: list[str], results: dict[str, str], seg_qe: dict[str, QE]) -> set[str]:
+        """Gửi các câu điểm thấp nhất cho LLM sửa; chỉ nhận bản sửa nếu điểm không giảm."""
+        low = sorted((s for s in segs if seg_qe[s].score < settings.qe_threshold), key=lambda s: seg_qe[s].score)
+        limit = max(1, int(len(segs) * settings.postedit_max_ratio)) if segs else 0
+        low = low[:limit]
+        edited: set[str] = set()
+        for i, s in enumerate(low, 1):
+            if self.status:
+                self.status(f"LLM đang sửa câu dịch kém: {i}/{len(low)}")
+            rel = self.glossary.relevant(s) if self.glossary is not None else None
+            try:
+                new = self.post_editor.post_edit(s, results.get(s, s), rel)
+            except Exception as e:  # noqa: BLE001
+                log.warning("LLM sửa câu thất bại, giữ bản dịch máy: %s", e)
+                break
+            if not new or placeholder_ids(new) != placeholder_ids(s):
+                continue
+            q = self._qe(s, new)
+            if q.score >= seg_qe[s].score:
+                results[s], seg_qe[s] = new, q
+                self._kept.discard(s)
+                edited.add(s)
+        return edited
 
     def _fix_terms(self, text: str) -> str:
         """Sau khi dịch: Việt hóa nhãn còn sót (Fig. 3 → Hình 3) và thuật ngữ còn tiếng Anh."""

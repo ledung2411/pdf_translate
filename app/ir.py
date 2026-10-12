@@ -40,6 +40,8 @@ class Region:
     # Cờ chất lượng: "kept_english" (giữ tiếng Anh vì bản dịch hỏng), "edited" (người dùng sửa)...
     flags: list[str] = field(default_factory=list)
     id: str = ""
+    score: float | None = None  # điểm chất lượng bản dịch 0..1 (thấp nhất trong các câu của vùng)
+    notes: list[str] = field(default_factory=list)  # lý do bị trừ điểm
 
     @property
     def plain(self) -> str:

@@ -54,6 +54,8 @@ class TranslateOptions:
     use_glossary: bool = True
     custom_glossary: str = ""
     make_bilingual: bool = True
+    post_edit: bool = True  # dùng LLM cục bộ (nếu đang chạy) sửa các câu điểm thấp
+    highlight_doubtful: bool = True  # tô vàng đoạn nghi ngờ trong PDF
 
 
 # Khối văn bản = vùng trong DocIR (giữ tên cũ cho dễ đọc).
@@ -680,6 +682,32 @@ def analyze_pdf(input_path: Path, opts: TranslateOptions) -> Document:
     return ir
 
 
+def _post_editor(engine, opts: TranslateOptions):
+    """LLM cục bộ để sửa câu điểm thấp — chỉ khi được bật, đang chạy, và engine chính không phải LLM."""
+    if not opts.post_edit or engine.key == "llm":
+        return None
+    try:
+        llm = get_engine("llm")
+    except TranslatorError:
+        return None
+    ok, _ = llm.available()
+    return llm if ok else None
+
+
+def _back_translator():
+    """Mô hình Việt→Anh để chấm điểm bằng dịch ngược (PDFTR_QE_BACKTRANS=1)."""
+    if not settings.qe_backtrans:
+        return None
+    from .translators import HFSeq2SeqTranslator
+
+    t = HFSeq2SeqTranslator("opus-vi-en", "OPUS-MT Vi→En", "", settings.backtrans_model)
+    ok, why = t.available()
+    if not ok:
+        log.warning("Không dùng được dịch ngược để chấm điểm: %s", why)
+        return None
+    return t
+
+
 def translate_document(ir: Document, opts: TranslateOptions, report: ProgressFn) -> None:
     """Tầng dịch: điền ``translation`` cho các vùng văn bản trong DocIR."""
     to_translate = [r for r in ir.regions if r.kind == "text"]
@@ -696,12 +724,17 @@ def translate_document(ir: Document, opts: TranslateOptions, report: ProgressFn)
     glossary = build_glossary(opts)
     ir.engine = engine.key
     ir.glossary = dict(glossary.entries) if glossary is not None and opts.custom_glossary.strip() else {}
-    translator = TextTranslator(engine, glossary)
+    translator = TextTranslator(
+        engine, glossary,
+        post_editor=_post_editor(engine, opts),
+        back_translator=_back_translator(),
+        status=lambda msg: report(0.82, msg),
+    )
     report(0.03, f"Đang dịch {len(to_translate)} đoạn văn bằng {engine.label}...")
     t_start = time.time()
 
     def on_tr(done: int, total: int) -> None:
-        frac = 0.03 + 0.85 * (done / total if total else 1)
+        frac = 0.03 + 0.77 * (done / total if total else 1)
         msg = f"Đang dịch: {done}/{total} câu"
         if 0 < done < total:
             remain = (time.time() - t_start) / done * (total - done)
@@ -709,9 +742,15 @@ def translate_document(ir: Document, opts: TranslateOptions, report: ProgressFn)
         report(frac, msg)
 
     translations = translator.translate_texts([r.text for r in to_translate], on_tr)
-    for r, t, kept in zip(to_translate, translations, translator.kept_english):
-        if kept:
+    for i, (r, t) in enumerate(zip(to_translate, translations)):
+        r.score = translator.scores[i]
+        r.notes = translator.reasons[i]
+        if translator.kept_english[i]:
             r.flags.append("kept_english")
+        if translator.post_edited[i]:
+            r.flags.append("post_edited")
+        if r.score < settings.qe_threshold:
+            r.flags.append("low_quality")
         if t and t.strip() != r.plain.strip():
             r.translation = t
 

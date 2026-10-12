@@ -447,6 +447,11 @@ Quy tắc:
 4. Chỉ trả về bản dịch, không giải thích, không thêm ngoặc kép hay tiền tố."""
 
 
+POST_EDIT_SYSTEM_PROMPT = """Bạn là biên tập viên hiệu đính bản dịch tài liệu khoa học Anh → Việt.
+Sửa bản dịch máy cho đúng nghĩa câu gốc, dùng thuật ngữ chuyên ngành chuẩn, văn phong học thuật.
+GIỮ NGUYÊN mọi placeholder dạng {0}, {1}... nếu có. Chỉ trả về bản dịch đã sửa, không giải thích."""
+
+
 class LLMTranslator(Translator):
     key = "llm"
     label = "LLM cục bộ (Ollama / llama.cpp / LM Studio)"
@@ -481,10 +486,13 @@ class LLMTranslator(Translator):
             terms = "\n".join(f"- {en}: {vi}" for en, vi in list(glossary.items())[:40])
             user += f"Thuật ngữ bắt buộc dùng:\n{terms}\n\n"
         user += f"Dịch đoạn sau sang tiếng Việt:\n\n{text}"
+        return self._chat(LLM_SYSTEM_PROMPT, user)
+
+    def _chat(self, system: str, user: str) -> str:
         payload = {
             "model": settings.llm_model,
             "messages": [
-                {"role": "system", "content": LLM_SYSTEM_PROMPT},
+                {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
             "temperature": 0.1,
@@ -504,6 +512,20 @@ class LLMTranslator(Translator):
 
     def translate_batch(self, texts: list[str], glossary: dict[str, str] | None = None) -> list[str]:
         return [self._translate_one(t, glossary) for t in texts]
+
+    def post_edit(self, source: str, draft: str, glossary: dict[str, str] | None = None) -> str:
+        """Hiệu đính bản dịch máy của một câu (dùng cho các câu bị chấm điểm thấp)."""
+        user = ""
+        if glossary:
+            terms = "\n".join(f"- {en}: {vi}" for en, vi in list(glossary.items())[:40])
+            user += f"Thuật ngữ bắt buộc dùng:\n{terms}\n\n"
+        user += (
+            f"Câu gốc tiếng Anh:\n{source}\n\n"
+            f"Bản dịch máy (có thể sai nghĩa, sai thuật ngữ hoặc còn sót tiếng Anh):\n{draft}\n\n"
+            "Hãy viết lại bản dịch tiếng Việt cho đúng nghĩa và trôi chảy. Giữ nguyên số liệu, ký hiệu, "
+            "trích dẫn và tên riêng. Chỉ trả về bản dịch đã sửa."
+        )
+        return self._chat(POST_EDIT_SYSTEM_PROMPT, user)
 
 
 # ---------------------------------------------------------------------------
