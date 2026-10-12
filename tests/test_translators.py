@@ -357,3 +357,18 @@ def test_real_conversion_matches_transformers(kind, monkeypatch, tmp_path):
         res = ct._model.translate_batch([tok.convert_ids_to_tokens(tok.encode(texts[0]))], beam_size=1,
                                         max_decoding_length=9)
         assert res[0].hypotheses[0][:5] == [t for t in hf_tokens if t != "</s>"][:5]
+
+
+def test_default_engine_prefers_ready_model(fake_ct2, monkeypatch):
+    from app.config import settings
+    from app.translators import _ENGINES, _build_registry, default_engine_key
+
+    monkeypatch.setattr(settings, "default_engine", "auto")
+
+    _build_registry()
+    vinai, opus = _ENGINES["vinai"], _ENGINES["opus"]
+    assert default_engine_key() == "vinai"  # chưa engine nào sẵn sàng → vinai (để báo cách cài)
+    _make_ct2_dir(opus)
+    assert default_engine_key() == "opus"  # chỉ OPUS đã chuyển đổi (không có torch)
+    _make_ct2_dir(vinai)
+    assert default_engine_key() == "vinai"

@@ -627,22 +627,18 @@ def _build_registry() -> None:
 
 
 def default_engine_key() -> str:
+    """Engine mặc định: mô hình tốt nhất đang dùng được ngay (VinAI → OPUS → LLM cục bộ).
+
+    Nếu chưa có engine nào sẵn sàng, trả về "vinai" để thông báo lỗi hướng dẫn cài đặt.
+    """
     if settings.default_engine != "auto":
         return settings.default_engine
-    try:
-        import torch  # noqa: F401  (chỉ kiểm tra đã cài)
-
-        # VinAI chất lượng tốt hơn OPUS rất nhiều với văn bản khoa học, nên dùng
-        # mặc định kể cả trên CPU (chậm hơn nhưng bản dịch đọc được).
-        return "vinai"
-    except Exception:  # noqa: BLE001
-        # Chưa cài torch: dùng LLM cục bộ nếu đang chạy, nếu không vẫn trả về
-        # "opus" để thông báo lỗi hướng dẫn cài đặt.
-        _build_registry()
-        llm = _ENGINES.get("llm")
-        if llm is not None and llm.available()[0]:
-            return "llm"
-        return "opus"
+    _build_registry()
+    for key in ("vinai", "opus", "llm"):
+        eng = _ENGINES.get(key)
+        if eng is not None and eng.available()[0]:
+            return key
+    return "vinai"
 
 
 def get_engine(key: str) -> Translator:
