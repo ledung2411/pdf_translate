@@ -11,13 +11,14 @@ import html
 import logging
 import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
 import pymupdf
 
 from .config import settings
+from .ir import Document, Page, Region
 from .pipeline import MATH_END, MATH_START, SUP_END, SUP_START, TextTranslator, strip_markers
 from .scientific import (
     APPENDIX_RE,
@@ -55,25 +56,8 @@ class TranslateOptions:
     make_bilingual: bool = True
 
 
-@dataclass
-class TextBlock:
-    page_index: int
-    bbox: pymupdf.Rect
-    text: str  # có ký tự đánh dấu công thức / chỉ số trên
-    kind: str
-    font_size: float
-    bold: bool
-    italic: bool
-    serif: bool
-    color: int
-    align: str
-    span_rects: list[pymupdf.Rect] = field(default_factory=list)
-    line_rects: list[pymupdf.Rect] = field(default_factory=list)
-    translation: str | None = None
-
-    @property
-    def plain(self) -> str:
-        return strip_markers(self.text)
+# Khối văn bản = vùng trong DocIR (giữ tên cũ cho dễ đọc).
+TextBlock = Region
 
 
 # ---------------------------------------------------------------------------
@@ -647,17 +631,7 @@ def build_glossary(opts: TranslateOptions) -> Glossary | None:
     return Glossary(entries) if entries else None
 
 
-def translate_pdf(
-    input_path: Path,
-    out_dir: Path,
-    opts: TranslateOptions,
-    progress: ProgressFn | None = None,
-) -> dict[str, Path]:
-    def report(frac: float, msg: str) -> None:
-        if progress:
-            progress(max(0.0, min(1.0, frac)), msg)
-
-    out_dir.mkdir(parents=True, exist_ok=True)
+def _open_pdf(input_path: Path) -> pymupdf.Document:
     try:
         doc = pymupdf.open(str(input_path))
     except Exception as e:  # noqa: BLE001
@@ -666,7 +640,17 @@ def translate_pdf(
         raise PdfError("PDF được bảo vệ bằng mật khẩu.")
     if not doc.is_pdf:
         raise PdfError("File không phải PDF.")
+    return doc
 
+
+def _select_pages(doc: pymupdf.Document, page_numbers: list[int]) -> None:
+    if page_numbers != list(range(1, len(doc) + 1)):
+        doc.select([n - 1 for n in page_numbers])
+
+
+def analyze_pdf(input_path: Path, opts: TranslateOptions) -> Document:
+    """Tầng phân tích: PDF → DocIR (các vùng đã phân loại, chưa dịch)."""
+    doc = _open_pdf(input_path)
     n = len(doc)
     start = max(1, opts.page_from or 1)
     end = min(n, opts.page_to or n)
@@ -674,29 +658,34 @@ def translate_pdf(
         raise PdfError(f"Khoảng trang không hợp lệ (tài liệu có {n} trang).")
     if end - start + 1 > settings.max_pages:
         raise PdfError(f"Tối đa {settings.max_pages} trang mỗi lần dịch.")
-    if start != 1 or end != n:
-        doc.select(list(range(start - 1, end)))
-    page_numbers = list(range(start, end + 1))
-    original = pymupdf.open()
-    original.insert_pdf(doc)
+    numbers = list(range(start, end + 1))
+    _select_pages(doc, numbers)
 
-    report(0.01, "Đang phân tích bố cục PDF...")
-    pages_blocks = [extract_blocks(doc[i], i) for i in range(len(doc))]
-    all_blocks = [b for blocks in pages_blocks for b in blocks]
-    if sum(len(b.plain) for b in all_blocks) < 30 * len(doc):
+    ir = Document(source=input_path.name)
+    for i, num in enumerate(numbers):
+        page = doc[i]
+        ir.pages.append(
+            Page(index=i, number=num, width=page.rect.width, height=page.rect.height,
+                 regions=extract_blocks(page, i))
+        )
+    if sum(len(r.plain) for r in ir.regions) < 30 * len(ir.pages):
         raise PdfError(
             "PDF gần như không có lớp chữ (có thể là bản scan/ảnh). "
             "Hãy chạy OCR trước (ví dụ: ocrmypdf input.pdf output.pdf) rồi dịch lại."
         )
     if opts.skip_references:
-        mark_references(all_blocks)
+        mark_references(ir.regions)
+    ir.assign_ids()
+    log.info("Thống kê khối: %s", ir.stats())
+    return ir
 
-    to_translate = [b for b in all_blocks if b.kind == "text"]
-    stats = {k: sum(1 for b in all_blocks if b.kind == k) for k in {b.kind for b in all_blocks}}
-    log.info("Thống kê khối: %s", stats)
+
+def translate_document(ir: Document, opts: TranslateOptions, report: ProgressFn) -> None:
+    """Tầng dịch: điền ``translation`` cho các vùng văn bản trong DocIR."""
+    to_translate = [r for r in ir.regions if r.kind == "text"]
     if not to_translate:
         raise PdfError(
-            f"Không tìm thấy đoạn văn nào cần dịch (phân loại khối: {stats}). "
+            f"Không tìm thấy đoạn văn nào cần dịch (phân loại khối: {ir.stats()}). "
             "Hãy chạy: python -m app.inspect <file.pdf> và gửi kết quả để được hỗ trợ."
         )
     engine = get_engine(opts.engine)
@@ -704,7 +693,10 @@ def translate_pdf(
     if not ok:
         raise TranslatorError(f"{engine.label}: {why}")
     engine.prepare(lambda msg: report(0.02, msg))
-    translator = TextTranslator(engine, build_glossary(opts))
+    glossary = build_glossary(opts)
+    ir.engine = engine.key
+    ir.glossary = dict(glossary.entries) if glossary is not None and opts.custom_glossary.strip() else {}
+    translator = TextTranslator(engine, glossary)
     report(0.03, f"Đang dịch {len(to_translate)} đoạn văn bằng {engine.label}...")
     t_start = time.time()
 
@@ -716,30 +708,69 @@ def translate_pdf(
             msg += f" — còn khoảng {_fmt_duration(remain)}"
         report(frac, msg)
 
-    translations = translator.translate_texts([b.text for b in to_translate], on_tr)
-    for b, t in zip(to_translate, translations):
-        if t and t.strip() != b.plain.strip():
-            b.translation = t
+    translations = translator.translate_texts([r.text for r in to_translate], on_tr)
+    for r, t, kept in zip(to_translate, translations, translator.kept_english):
+        if kept:
+            r.flags.append("kept_english")
+        if t and t.strip() != r.plain.strip():
+            r.translation = t
+
+
+def render_outputs(
+    ir: Document, input_path: Path, out_dir: Path, make_bilingual_pdf: bool = True,
+    report: ProgressFn | None = None,
+) -> dict[str, Path]:
+    """Tầng dựng: DocIR + PDF gốc → PDF dịch, PDF song ngữ, Markdown."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    doc = _open_pdf(input_path)
+    _select_pages(doc, ir.page_numbers)
+    original = pymupdf.open()
+    original.insert_pdf(doc)
 
     fontkit = get_fontkit()
-    for i, blocks in enumerate(pages_blocks):
-        report(0.88 + 0.09 * i / max(len(doc), 1), f"Đang dựng trang {i + 1}/{len(doc)}...")
-        render_page(doc[i], blocks, fontkit)
+    for p in ir.pages:
+        if report:
+            report(0.88 + 0.09 * p.index / max(len(ir.pages), 1), f"Đang dựng trang {p.index + 1}/{len(ir.pages)}...")
+        render_page(doc[p.index], p.regions, fontkit)
 
-    report(0.97, "Đang lưu kết quả...")
-    stem = re.sub(r"[^\w\-]+", "_", input_path.stem)[:80] or "document"
+    if report:
+        report(0.97, "Đang lưu kết quả...")
+    stem = re.sub(r"[^\w\-]+", "_", Path(ir.source).stem)[:80] or "document"
     outputs: dict[str, Path] = {}
-    p = out_dir / f"{stem}_vi.pdf"
-    doc.save(str(p), garbage=3, deflate=True)
-    outputs["translated"] = p
-    if opts.make_bilingual:
-        translated = pymupdf.open(str(p))
-        bi = make_bilingual(original, translated)
+    path = out_dir / f"{stem}_vi.pdf"
+    doc.save(str(path), garbage=3, deflate=True)
+    outputs["translated"] = path
+    if make_bilingual_pdf:
+        bi = make_bilingual(original, pymupdf.open(str(path)))
         p2 = out_dir / f"{stem}_song_ngu.pdf"
         bi.save(str(p2), garbage=3, deflate=True)
         outputs["bilingual"] = p2
     p3 = out_dir / f"{stem}_vi.md"
-    p3.write_text(blocks_to_markdown(pages_blocks, page_numbers), encoding="utf-8")
+    p3.write_text(blocks_to_markdown([p.regions for p in ir.pages], ir.page_numbers), encoding="utf-8")
     outputs["markdown"] = p3
+    return outputs
+
+
+IR_FILENAME = "document.json"
+
+
+def translate_pdf(
+    input_path: Path,
+    out_dir: Path,
+    opts: TranslateOptions,
+    progress: ProgressFn | None = None,
+) -> dict[str, Path]:
+    """Toàn bộ quy trình: phân tích → dịch → lưu DocIR → dựng kết quả."""
+
+    def report(frac: float, msg: str) -> None:
+        if progress:
+            progress(max(0.0, min(1.0, frac)), msg)
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    report(0.01, "Đang phân tích bố cục PDF...")
+    ir = analyze_pdf(input_path, opts)
+    translate_document(ir, opts, report)
+    ir.save(out_dir / IR_FILENAME)
+    outputs = render_outputs(ir, input_path, out_dir, opts.make_bilingual, report)
     report(1.0, "Hoàn tất")
     return outputs

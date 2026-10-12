@@ -437,7 +437,7 @@ def default_engine_key() -> str:
     if settings.default_engine != "auto":
         return settings.default_engine
     try:
-        import torch
+        import torch  # noqa: F401  (chỉ kiểm tra đã cài)
 
         # VinAI chất lượng tốt hơn OPUS rất nhiều với văn bản khoa học, nên dùng
         # mặc định kể cả trên CPU (chậm hơn nhưng bản dịch đọc được).

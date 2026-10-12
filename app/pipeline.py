@@ -139,6 +139,9 @@ class TextTranslator:
         self.engine = engine
         self.glossary = glossary if glossary is not None and len(glossary) else None
         self.cache = get_cache() if use_cache else None
+        # Sau mỗi lần translate_texts: đoạn nào có câu phải giữ tiếng Anh (bản dịch hỏng).
+        self.kept_english: list[bool] = []
+        self._kept: set[str] = set()
 
     # -- chuẩn bị ----------------------------------------------------------
 
@@ -256,15 +259,21 @@ class TextTranslator:
         """Bản dịch câu bị hỏng: dịch lại từng vế ngắn; vế nào vẫn hỏng thì giữ tiếng Anh."""
         parts = [p for p in re.split(r"(?<=[,;:])\s+", seg) if p.strip()]
         if len(parts) < 2:
+            self._kept.add(seg)
             return seg
         tr = self._run_engine(parts)
         out = []
         for p in parts:
             t = tr.get(p, p)
-            out.append(p if is_degenerate(p, t) else t)
+            if is_degenerate(p, t):
+                self._kept.add(seg)
+                out.append(p)
+            else:
+                out.append(t)
         return " ".join(out)
 
     def translate_texts(self, texts: list[str], progress: ProgressFn | None = None) -> list[str]:
+        self._kept = set()
         units = [self._prepare(t) for t in texts]
         all_segs = list(dict.fromkeys(s for u in units for s in u.segments))
         total = len(all_segs)
@@ -291,6 +300,7 @@ class TextTranslator:
             if progress:
                 progress(done, total)
 
+        self.kept_english = [any(s in self._kept for s in u.segments) for u in units]
         out = []
         for u in units:
             if u.result is None:
