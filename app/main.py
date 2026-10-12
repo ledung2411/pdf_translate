@@ -3,20 +3,23 @@
 from __future__ import annotations
 
 import logging
+import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
 from . import __version__
 from .config import settings
 from .jobs import manager
-from .pdf_processor import TranslateOptions, build_glossary
+from .pdf_processor import PdfError, TranslateOptions, analyze_pdf, build_glossary
 from .pipeline import TextTranslator
 from .scientific import join_lines, load_builtin_glossary
+from .terms import extract_terms
 from .translators import TranslatorError, default_engine_key, get_engine, list_engines
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -88,6 +91,30 @@ async def create_job(
     )
     job = manager.submit(file.filename or "document.pdf", data, opts)
     return job.public()
+
+
+@app.post("/api/terms")
+async def analyze_terms(
+    file: UploadFile = File(...),
+    page_from: int | None = Form(None),
+    page_to: int | None = Form(None),
+) -> dict:
+    """Phân tích nhanh (không dịch) để đề xuất thuật ngữ của bài cho người dùng duyệt."""
+    data = await file.read()
+    if len(data) > settings.max_upload_mb * 1024 * 1024:
+        raise HTTPException(413, f"File quá lớn (tối đa {settings.max_upload_mb} MB).")
+    if not data.startswith(b"%PDF"):
+        raise HTTPException(400, "File tải lên không phải PDF.")
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "input.pdf"
+        path.write_bytes(data)
+        try:
+            ir = await run_in_threadpool(
+                analyze_pdf, path, TranslateOptions(page_from=page_from or None, page_to=page_to or None)
+            )
+        except PdfError as e:
+            raise HTTPException(400, str(e)) from e
+    return {"terms": [t.to_dict() for t in extract_terms(ir)]}
 
 
 @app.get("/api/jobs/{job_id}")

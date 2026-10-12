@@ -41,9 +41,10 @@ Yêu cầu Python 3.10+.
 python -m venv .venv
 source .venv/bin/activate            # Windows: .venv\Scripts\activate
 
-# torch: chọn bản phù hợp máy (bản CPU nhẹ hơn nhiều)
-pip install torch --index-url https://download.pytorch.org/whl/cpu
 pip install -r requirements.txt -r requirements-ml.txt
+# torch chỉ cần một lần để chuyển mô hình sang CTranslate2 int8 (nhanh hơn ~3-4 lần trên CPU)
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+python scripts/convert_ct2.py vinai
 
 # (tuỳ chọn) tải trước mô hình để dùng offline
 python scripts/download_models.py vinai opus
@@ -86,6 +87,8 @@ Rồi chọn engine **LLM cục bộ** trên giao diện. Mọi server có API t
 |------|----------|---------|
 | `PDFTR_DEFAULT_ENGINE` | `auto` | Engine mặc định (`auto` / `vinai` / `opus` / `nllb` / `llm`) |
 | `PDFTR_DEVICE` | `auto` | `auto` / `cpu` / `cuda` / `mps` |
+| `PDFTR_BACKEND` | `auto` | `auto` (ưu tiên CTranslate2) / `ct2` / `hf` (transformers + torch) |
+| `PDFTR_THREADS` | `0` | Số luồng CPU cho CTranslate2 (0 = tự chọn) |
 | `PDFTR_BATCH_SIZE` | `8` | Số câu dịch mỗi lô |
 | `PDFTR_NUM_BEAMS` | `4` | Beam search (cao hơn = tốt hơn nhưng chậm hơn) |
 | `PDFTR_DATA_DIR` | `./data` | Thư mục lưu file tải lên, kết quả, cache bản dịch |

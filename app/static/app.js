@@ -68,6 +68,7 @@ function setFile(f) {
     return;
   }
   selectedFile = f;
+  resetTerms();
   $("#file-name").textContent = f.name;
   $("#file-hint").textContent = `${(f.size / 1024 / 1024).toFixed(2)} MB — bấm để chọn file khác`;
   $("#submit").disabled = false;
@@ -88,6 +89,83 @@ for (const id of ["skip-refs", "use-gloss", "bilingual"]) {
   el.addEventListener("change", () => store.set("opt-" + id, el.checked ? "1" : "0"));
 }
 
+// ---------------- Thuật ngữ của bài ----------------
+const KIND_LABEL = { definition: "viết tắt", acronym: "tên riêng", phrase: "cụm từ" };
+
+function resetTerms() {
+  $("#terms-table tbody").innerHTML = "";
+  $("#terms-wrap").classList.add("hidden");
+  $("#save-terms").classList.add("hidden");
+  $("#terms-status").textContent = "";
+  $("#analyze-terms").disabled = !selectedFile;
+}
+
+function termGlossaryLines() {
+  return $$("#terms-table tbody tr")
+    .map((tr) => [tr.dataset.term, tr.querySelector("input").value.trim()])
+    .filter(([en, vi]) => en && vi)
+    .map(([en, vi]) => `${en} = ${vi}`);
+}
+
+$("#analyze-terms").addEventListener("click", async () => {
+  if (!selectedFile) return;
+  const btn = $("#analyze-terms");
+  btn.disabled = true;
+  $("#terms-status").textContent = "Đang phân tích...";
+  const fd = new FormData();
+  fd.append("file", selectedFile);
+  if ($("#page-from").value) fd.append("page_from", $("#page-from").value);
+  if ($("#page-to").value) fd.append("page_to", $("#page-to").value);
+  try {
+    const res = await fetch("api/terms", { method: "POST", body: fd });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Lỗi phân tích");
+    const tbody = $("#terms-table tbody");
+    tbody.innerHTML = "";
+    for (const t of data.terms) {
+      const tr = document.createElement("tr");
+      tr.dataset.term = t.term;
+      const a = document.createElement("td");
+      a.textContent = t.term + (t.expansion ? ` (${t.expansion})` : "");
+      const badge = document.createElement("span");
+      badge.className = "badge";
+      badge.textContent = KIND_LABEL[t.kind] || t.kind;
+      a.appendChild(badge);
+      const n = document.createElement("td");
+      n.className = "num";
+      n.textContent = t.count;
+      const c = document.createElement("td");
+      const input = document.createElement("input");
+      input.value = t.suggestion || "";
+      input.placeholder = t.kind === "phrase" || t.kind === "definition" ? "để trống = mô hình tự dịch" : "";
+      c.appendChild(input);
+      tr.append(a, n, c);
+      tbody.appendChild(tr);
+    }
+    $("#terms-wrap").classList.toggle("hidden", !data.terms.length);
+    $("#save-terms").classList.toggle("hidden", !data.terms.length);
+    $("#terms-status").textContent = data.terms.length
+      ? `Tìm thấy ${data.terms.length} thuật ngữ.`
+      : "Không tìm thấy thuật ngữ lặp lại.";
+  } catch (err) {
+    $("#terms-status").textContent = "Lỗi: " + err.message;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+$("#save-terms").addEventListener("click", () => {
+  const lines = termGlossaryLines().filter((l) => {
+    const [en, vi] = l.split(" = ");
+    return en !== vi; // bỏ các mục giữ nguyên (tên riêng)
+  });
+  if (!lines.length) return;
+  const g = $("#custom-gloss");
+  g.value = (g.value.trim() ? g.value.trim() + "\n" : "") + lines.join("\n");
+  store.set("custom-glossary", g.value);
+  $("#terms-status").textContent = `Đã lưu ${lines.length} mục vào "Thuật ngữ của tôi".`;
+});
+
 // ---------------- Gửi job ----------------
 let pollTimer = null;
 let currentJob = null;
@@ -103,7 +181,7 @@ $("#pdf-form").addEventListener("submit", async (e) => {
   fd.append("skip_references", $("#skip-refs").checked);
   fd.append("use_glossary", $("#use-gloss").checked);
   fd.append("make_bilingual", $("#bilingual").checked);
-  fd.append("custom_glossary", $("#custom-gloss").value);
+  fd.append("custom_glossary", $("#custom-gloss").value + "\n" + termGlossaryLines().join("\n"));
 
   $("#submit").disabled = true;
   showJob({ filename: selectedFile.name, status: "queued", progress: 0, message: "Đang tải file lên..." });

@@ -1,8 +1,9 @@
-# Mô hình dịch máy chạy cục bộ (Hugging Face).
-# Cài torch phù hợp với máy trước, ví dụ chỉ CPU:
-#   pip install torch --index-url https://download.pytorch.org/whl/cpu
-torch>=2.1
+# Mô hình dịch máy chạy cục bộ.
+# Backend mặc định CTranslate2 int8: nhanh, ít RAM, KHÔNG cần torch khi dịch.
+ctranslate2>=4.4
 transformers>=4.40
 sentencepiece>=0.1.99
 sacremoses>=0.1.1
 protobuf>=3.20
+# torch chỉ cần MỘT LẦN để chuyển mô hình sang CTranslate2 (hoặc khi đặt PDFTR_BACKEND=hf):
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu

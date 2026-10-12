@@ -116,3 +116,11 @@ table { border-collapse: collapse; width: 100%; }
 th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); }
 th { position: sticky; top: 0; background: var(--card); }
 .foot { padding: 8px 16px 32px; font-size: 13px; }
+
+.terms { border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; margin: 0 0 16px; }
+.terms summary { cursor: pointer; font-weight: 600; }
+.terms p { margin: 8px 0; }
+.terms .table-wrap { margin: 10px 0; max-height: 360px; }
+.terms td input { width: 100%; font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; }
+.terms td.num { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+.badge { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 99px; background: var(--accent-soft); color: var(--accent); margin-left: 6px; }

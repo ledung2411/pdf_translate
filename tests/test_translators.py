@@ -50,7 +50,7 @@ class FakeModel:
 
 
 @pytest.fixture
-def fake_hf(monkeypatch):
+def fake_hf(monkeypatch, tmp_path):
     torch = types.ModuleType("torch")
     torch.cuda = types.SimpleNamespace(is_available=lambda: False)
     torch.backends = types.SimpleNamespace(mps=types.SimpleNamespace(is_available=lambda: False))
@@ -74,9 +74,19 @@ def fake_hf(monkeypatch):
     monkeypatch.setitem(sys.modules, "torch", torch)
     monkeypatch.setitem(sys.modules, "transformers", tf)
     monkeypatch.setitem(sys.modules, "sentencepiece", types.ModuleType("sentencepiece"))
+    monkeypatch.setitem(sys.modules, "ctranslate2", None)  # backend transformers+torch
+    snap = tmp_path / "snap"
+    snap.mkdir()
+    (snap / "pytorch_model.bin").write_bytes(b"")
     hub = types.ModuleType("huggingface_hub")
-    hub.snapshot_download = lambda name, **kw: created.setdefault("snap", []).append(kw) or f"/cache/{name}"
+
+    def snapshot_download(name, **kw):
+        created.setdefault("snap", []).append(kw)
+        return str(snap)
+
+    hub.snapshot_download = snapshot_download
     monkeypatch.setitem(sys.modules, "huggingface_hub", hub)
+    created["snap_dir"] = str(snap)
     return created
 
 
@@ -91,7 +101,7 @@ def test_mbart_uses_decoder_start_token_and_keeps_order(fake_hf):
 def test_loads_from_local_cache_without_network(fake_hf):
     HFSeq2SeqTranslator("opus", "", "", "opus/x").prepare()
     assert fake_hf["snap"] == [{"local_files_only": True}]
-    assert fake_hf["tok"].kwargs["name"] == "/cache/opus/x"
+    assert fake_hf["tok"].kwargs["name"] == fake_hf["snap_dir"]
 
 
 def test_generation_guards_against_loops(fake_hf):
@@ -115,6 +125,7 @@ def test_marian_has_no_lang_tokens(fake_hf):
 
 def test_missing_dependencies_reported(monkeypatch):
     monkeypatch.setitem(sys.modules, "torch", None)  # import torch -> ImportError
+    monkeypatch.setitem(sys.modules, "ctranslate2", None)
     ok, why = HFSeq2SeqTranslator("opus", "", "", "opus/x").available()
     assert not ok and "torch" in why
 
@@ -122,7 +133,7 @@ def test_missing_dependencies_reported(monkeypatch):
 def test_prepare_reports_status(fake_hf):
     msgs = []
     HFSeq2SeqTranslator("opus", "", "", "opus/x").prepare(msgs.append)
-    assert msgs[0].startswith("Đang nạp mô hình") and "CPU" in msgs[-1]
+    assert any(m.startswith("Đang nạp mô hình") for m in msgs) and "CPU" in msgs[-1]
 
 
 def test_cache_roundtrip(tmp_path):
@@ -174,3 +185,87 @@ def test_llm_translator_openai_compatible(monkeypatch):
         assert "neural network: mạng nơ-ron" in user_msg and "The {0} network converges." in user_msg
     finally:
         srv.shutdown()
+
+
+# ---------------- Backend CTranslate2 (giả lập) ----------------
+
+
+class FakeCT2Tokenizer:
+    def __init__(self, **kw):
+        self.kw = kw
+
+    def encode(self, text, **kw):
+        return [len(w) for w in text.split()] + [2]
+
+    def convert_ids_to_tokens(self, ids):
+        return [f"t{i}" for i in ids]
+
+    def convert_tokens_to_ids(self, toks):
+        return toks
+
+    def decode(self, toks, skip_special_tokens=True):
+        return " ".join(toks)
+
+
+@pytest.fixture
+def fake_ct2(monkeypatch, tmp_path):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    calls = {}
+    ct2 = types.ModuleType("ctranslate2")
+    ct2.get_cuda_device_count = lambda: 0
+
+    class Result:
+        def __init__(self, hyp):
+            self.hypotheses = [hyp]
+
+    class Translator:
+        def __init__(self, path, **kw):
+            calls["init"] = (path, kw)
+
+        def translate_batch(self, sources, **kw):
+            calls["kw"] = kw
+            pre = kw.get("target_prefix")
+            return [Result((pre[i] if pre else []) + ["vi"] + s[:-1]) for i, s in enumerate(sources)]
+
+    ct2.Translator = Translator
+    tf = types.ModuleType("transformers")
+    tf.AutoTokenizer = types.SimpleNamespace(from_pretrained=lambda p, **kw: FakeCT2Tokenizer(path=p, **kw))
+    tf.logging = types.SimpleNamespace(set_verbosity_error=lambda: None)
+    monkeypatch.setitem(sys.modules, "ctranslate2", ct2)
+    monkeypatch.setitem(sys.modules, "transformers", tf)
+    monkeypatch.setitem(sys.modules, "sentencepiece", types.ModuleType("sentencepiece"))
+    monkeypatch.setitem(sys.modules, "torch", None)  # không cần torch khi đã có bản CT2
+    return calls
+
+
+def _make_ct2_dir(t):
+    d = t.ct2_dir()
+    d.mkdir(parents=True)
+    (d / "model.bin").write_bytes(b"")
+    return d
+
+
+def test_ct2_backend_without_torch(fake_ct2):
+    t = HFSeq2SeqTranslator("opus", "", "", "Helsinki-NLP/opus-mt-en-vi")
+    _make_ct2_dir(t)
+    assert t.available() == (True, "")
+    out = t.translate_batch(["hello big world", "hi"])
+    assert out == ["vi t5 t3 t5", "vi t2"]
+    path, kw = fake_ct2["init"]
+    assert kw["compute_type"] == "int8" and kw["device"] == "cpu"
+    assert fake_ct2["kw"]["no_repeat_ngram_size"] == 4 and fake_ct2["kw"]["target_prefix"] is None
+    assert t.cache_id().endswith(":ct2")
+
+
+def test_ct2_nllb_uses_target_prefix_and_strips_it(fake_ct2):
+    t = HFSeq2SeqTranslator("nllb", "", "", "facebook/nllb", src_lang="eng_Latn", tgt_lang="vie_Latn", tgt_mode="forced_bos")
+    _make_ct2_dir(t)
+    assert t.translate_batch(["hello"]) == ["vi t5"]
+    assert fake_ct2["kw"]["target_prefix"] == [["vie_Latn"]]
+
+
+def test_ct2_missing_conversion_without_torch_explains(fake_ct2):
+    ok, why = HFSeq2SeqTranslator("vinai", "", "", "vinai/x").available()
+    assert not ok and "convert_ct2.py vinai" in why

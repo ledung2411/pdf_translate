@@ -54,6 +54,22 @@
           <label><input id="bilingual" type="checkbox" checked /> Tạo thêm bản song ngữ (gốc | dịch)</label>
         </div>
 
+        <details id="terms-box" class="terms">
+          <summary>Thuật ngữ của bài <small class="muted">(tùy chọn — giúp dịch nhất quán)</small></summary>
+          <p class="muted">Tool tìm từ viết tắt và cụm chuyên ngành lặp lại trong bài. Điền bản dịch cho mục muốn cố định; để trống thì mô hình tự dịch.</p>
+          <div class="row">
+            <button type="button" id="analyze-terms" class="btn" disabled>Phân tích thuật ngữ</button>
+            <span id="terms-status" class="muted"></span>
+          </div>
+          <div id="terms-wrap" class="table-wrap hidden">
+            <table id="terms-table">
+              <thead><tr><th>Thuật ngữ</th><th>Số lần</th><th>Bản dịch tiếng Việt</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <button type="button" id="save-terms" class="btn hidden">Lưu các mục đã điền vào "Thuật ngữ của tôi"</button>
+        </details>
+
         <button id="submit" class="btn primary" type="submit" disabled>Bắt đầu dịch</button>
       </form>
 

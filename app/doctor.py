@@ -47,15 +47,25 @@ def main(argv: list[str] | None = None) -> int:
     for m in ("pymupdf", "pymupdf_fonts", "fastapi", "uvicorn", "multipart"):
         good &= check_module(m)
     print("\n# Thư viện mô hình (cho vinai/opus/nllb)")
-    ml = all([check_module("torch"), check_module("transformers"), check_module("sentencepiece")])
+    ml = all([check_module("transformers"), check_module("sentencepiece")])
+    has_ct2 = check_module("ctranslate2", required=False)
+    has_torch = check_module("torch", required=False)
     check_module("sacremoses", required=False)
-    if ml:
-        import torch
+    ml = ml and (has_ct2 or has_torch)
+    if has_ct2:
+        import ctranslate2
 
-        if torch.cuda.is_available():
-            print(f"{OK} GPU: {torch.cuda.get_device_name(0)}")
-        else:
-            print(f"{WARN} Không có GPU — dịch bằng CPU (chậm hơn, có thể đặt PDFTR_NUM_BEAMS=2 để nhanh hơn).")
+        n = ctranslate2.get_cuda_device_count()
+        print(f"{OK if n else WARN} CTranslate2: {'GPU' if n else 'CPU (int8)'}")
+    elif has_torch:
+        print(f"{WARN} Chưa cài ctranslate2 — đang dùng torch (chậm hơn ~3-4 lần). Cài: pip install ctranslate2")
+    if ml:
+        from .translators import HFSeq2SeqTranslator, list_engines as _engines
+
+        for e in _engines():
+            if isinstance(e, HFSeq2SeqTranslator):
+                state = "đã chuyển" if e._ct2_ready() else "chưa chuyển (tự chuyển ở lần dùng đầu nếu có torch)"
+                print(f"      CTranslate2 {e.key:6}: {state}")
         try:
             from huggingface_hub import scan_cache_dir
 

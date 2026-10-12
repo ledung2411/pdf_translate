@@ -20,6 +20,9 @@ class Settings:
     # "auto": dùng VinAI (chất lượng tốt nhất) nếu đã cài torch, nếu không thì LLM cục bộ.
     default_engine: str = os.environ.get("PDFTR_DEFAULT_ENGINE", "auto")
     device: str = os.environ.get("PDFTR_DEVICE", "auto")  # auto | cpu | cuda | mps
+    # Backend mô hình dịch máy: auto (ưu tiên CTranslate2) | ct2 | hf (transformers+torch)
+    backend: str = os.environ.get("PDFTR_BACKEND", "auto")
+    threads: int = int(os.environ.get("PDFTR_THREADS", "0"))  # 0 = tự chọn
     batch_size: int = int(os.environ.get("PDFTR_BATCH_SIZE", "8"))
     num_beams: int = int(os.environ.get("PDFTR_NUM_BEAMS", "4"))
     max_upload_mb: int = int(os.environ.get("PDFTR_MAX_UPLOAD_MB", "100"))

@@ -86,7 +86,24 @@ _TOKENIZER_FILES = [
 ]
 
 
+def _has_module(name: str) -> tuple[bool, str]:
+    try:
+        __import__(name)
+        return True, ""
+    except ImportError:
+        return False, ""
+    except Exception as e:  # noqa: BLE001  (vd. lỗi DLL của torch trên Windows)
+        return False, f"Lỗi khi nạp {name}: {e}"
+
+
 class HFSeq2SeqTranslator(Translator):
+    """Mô hình dịch máy Hugging Face, chạy bằng một trong hai backend:
+
+    - ``ct2``: CTranslate2 int8 — nhanh hơn ~3-4 lần trên CPU, ít RAM, KHÔNG cần torch.
+      Lần đầu tự chuyển đổi từ mô hình Hugging Face (cần torch đúng một lần).
+    - ``hf`` : transformers + torch (dự phòng khi chưa cài ctranslate2).
+    """
+
     def __init__(
         self,
         key: str,
@@ -107,27 +124,58 @@ class HFSeq2SeqTranslator(Translator):
         self._model = None
         self._tokenizer = None
         self._device = "cpu"
+        self._backend = ""
         self._lock = threading.Lock()
 
+    # -- trạng thái ------------------------------------------------------------
+
+    def ct2_dir(self) -> Path:
+        name = self.model_name.strip("/\\").replace("/", "--").replace("\\", "--").replace(":", "")
+        return settings.data_dir / "models" / "ct2" / name
+
+    def _ct2_ready(self) -> bool:
+        return (self.ct2_dir() / "model.bin").exists()
+
+    def _choose_backend(self) -> tuple[str, str]:
+        """Trả về (backend, lý do nếu không dùng được)."""
+        want = settings.backend
+        tf_ok, tf_err = _has_module("transformers")
+        sp_ok, sp_err = _has_module("sentencepiece")
+        ct2_ok, ct2_err = _has_module("ctranslate2")
+        torch_ok, torch_err = _has_module("torch")
+        err = tf_err or sp_err or ct2_err or torch_err
+        if err:
+            return "", err
+        missing = [n for n, ok in (("transformers", tf_ok), ("sentencepiece", sp_ok)) if not ok]
+        if not (ct2_ok or torch_ok):
+            missing.append("ctranslate2 (hoặc torch)")
+        if missing:
+            return "", f"Chưa cài {', '.join(missing)} (pip install -r requirements-ml.txt)"
+        if want in ("auto", "ct2") and ct2_ok and (self._ct2_ready() or torch_ok):
+            return "ct2", ""
+        if want in ("auto", "hf") and torch_ok:
+            return "hf", ""
+        if want == "ct2" or (ct2_ok and not torch_ok):
+            return "", (
+                "Chưa có bản CTranslate2 của mô hình. Cài torch một lần để chuyển đổi: "
+                "pip install torch --index-url https://download.pytorch.org/whl/cpu, "
+                f"rồi chạy python scripts/convert_ct2.py {self.key}"
+            )
+        return "", f"Backend '{want}' không dùng được (PDFTR_BACKEND)"
+
     def cache_id(self) -> str:
-        return f"{self.key}:{self.model_name}:b{settings.num_beams}"
+        backend = self._backend or self._choose_backend()[0]
+        return f"{self.key}:{self.model_name}:b{settings.num_beams}:{backend}"
 
     def available(self) -> tuple[bool, str]:
-        missing = []
-        for mod in ("torch", "transformers", "sentencepiece"):
-            try:
-                __import__(mod)
-            except ImportError:
-                missing.append(mod)
-            except Exception as e:  # noqa: BLE001  (vd. lỗi DLL của torch trên Windows)
-                return False, f"Lỗi khi nạp {mod}: {e}"
-        if missing:
-            return False, f"Chưa cài {', '.join(missing)} (pip install -r requirements-ml.txt)"
-        return True, ""
+        backend, why = self._choose_backend()
+        return (bool(backend), why)
 
     def prepare(self, status: StatusFn | None = None) -> None:
         with self._lock:
             self._load(status)
+
+    # -- tải mô hình gốc từ Hugging Face ----------------------------------------
 
     def _local_path(self, download: bool) -> str:
         """Đường dẫn thư mục mô hình trên máy.
@@ -151,6 +199,25 @@ class HFSeq2SeqTranslator(Translator):
             weights = ["pytorch_model*.bin", "pytorch_model.bin.index.json"]
         return snapshot_download(self.model_name, allow_patterns=[*_TOKENIZER_FILES, *weights])
 
+    def _hf_source(self, status: StatusFn | None) -> str:
+        """Thư mục mô hình Hugging Face trên máy (tải nếu chưa có)."""
+        stop_watch = self._watch_download(status)
+        try:
+            try:
+                path = self._local_path(download=False)
+                if any(Path(path).glob("*.bin")) or any(Path(path).glob("*.safetensors")):
+                    return path
+            except Exception:  # noqa: BLE001
+                pass
+            return self._local_path(download=True)
+        except Exception as e:  # noqa: BLE001
+            raise TranslatorError(
+                f"Không tải được mô hình {self.model_name}: {e}. "
+                "Lần chạy đầu cần Internet để tải mô hình (hoặc chạy scripts/download_models.py)."
+            ) from e
+        finally:
+            stop_watch()
+
     def _watch_download(self, status: StatusFn | None) -> Callable[[], None]:
         """Báo số MB đã tải trong lúc Hugging Face tải mô hình lần đầu."""
         if status is None or Path(self.model_name).exists():
@@ -173,17 +240,89 @@ class HFSeq2SeqTranslator(Translator):
         threading.Thread(target=run, daemon=True).start()
         return stop.set
 
-    def _load(self, status: StatusFn | None = None) -> None:
-        if self._model is not None:
-            return
-        ok, why = self.available()
-        if not ok:
-            raise TranslatorError(why)
-        import torch
-        import transformers
-        from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+    def _tokenizer_kwargs(self) -> dict:
+        return {"src_lang": self.src_lang} if self.src_lang else {}
 
-        transformers.logging.set_verbosity_error()
+    # -- CTranslate2 -----------------------------------------------------------
+
+    def convert_ct2(self, status: StatusFn | None = None) -> Path:
+        """Chuyển mô hình Hugging Face sang CTranslate2 int8 (cần torch, chỉ một lần)."""
+        from ctranslate2.converters import TransformersConverter
+        from transformers import AutoTokenizer
+
+        src = self._hf_source(status)
+        out = self.ct2_dir()
+        tmp = out.with_name(out.name + ".tmp")
+        if status:
+            status(f"Đang chuyển {self.model_name} sang CTranslate2 int8 (chỉ lần đầu, 1–3 phút)...")
+        log.info("Chuyển đổi %s -> %s", src, out)
+        tmp.parent.mkdir(parents=True, exist_ok=True)
+        TransformersConverter(src).convert(str(tmp), quantization="int8", force=True)
+        AutoTokenizer.from_pretrained(src, **self._tokenizer_kwargs()).save_pretrained(str(tmp))
+        if self.tgt_mode == "decoder_start" and self.tgt_lang:
+            # VinAI (mBART-50) bắt đầu giải mã trực tiếp bằng mã ngôn ngữ đích.
+            cfg_path = tmp / "config.json"
+            cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+            cfg["decoder_start_token"] = self.tgt_lang
+            cfg_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+        if out.exists():
+            import shutil
+
+            shutil.rmtree(out)
+        tmp.rename(out)
+        return out
+
+    def _load_ct2(self, status: StatusFn | None) -> None:
+        import ctranslate2
+        from transformers import AutoTokenizer
+
+        if not self._ct2_ready():
+            self.convert_ct2(status)
+        device = settings.device
+        if device in ("auto", "cuda"):
+            device = "cuda" if ctranslate2.get_cuda_device_count() > 0 else "cpu"
+        if device not in ("cuda", "cpu"):
+            device = "cpu"
+        compute = "int8_float16" if device == "cuda" else "int8"
+        if status:
+            status(f"Đang nạp mô hình {self.model_name} (CTranslate2 int8)...")
+        self._model = ctranslate2.Translator(
+            str(self.ct2_dir()), device=device, compute_type=compute,
+            intra_threads=settings.threads or 0,
+        )
+        self._tokenizer = AutoTokenizer.from_pretrained(str(self.ct2_dir()), **self._tokenizer_kwargs())
+        self._device = device
+
+    def _translate_ct2(self, batch: list[str]) -> list[str]:
+        tok = self._tokenizer
+        sources = [
+            tok.convert_ids_to_tokens(tok.encode(t, truncation=True, max_length=512)) for t in batch
+        ]
+        prefix = None
+        if self.tgt_mode == "forced_bos" and self.tgt_lang:
+            prefix = [[self.tgt_lang] for _ in batch]
+        longest = max(len(x) for x in sources)
+        results = self._model.translate_batch(
+            sources,
+            target_prefix=prefix,
+            beam_size=settings.num_beams,
+            max_batch_size=max(1, settings.batch_size),
+            max_decoding_length=min(512, int(longest * 2.5) + 10),
+            no_repeat_ngram_size=4,
+        )
+        out = []
+        for r in results:
+            hyp = r.hypotheses[0]
+            if prefix and hyp and hyp[0] == self.tgt_lang:
+                hyp = hyp[1:]
+            out.append(tok.decode(tok.convert_tokens_to_ids(hyp), skip_special_tokens=True).strip())
+        return out
+
+    # -- transformers + torch ---------------------------------------------------
+
+    def _load_hf(self, status: StatusFn | None) -> None:
+        import torch
+        from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
         device = settings.device
         if device == "auto":
@@ -193,74 +332,83 @@ class HFSeq2SeqTranslator(Translator):
                 device = "mps"
             else:
                 device = "cpu"
-        log.info("Đang nạp mô hình %s trên %s ...", self.model_name, device)
+        path = self._hf_source(status)
         if status:
             status(f"Đang nạp mô hình {self.model_name}...")
-        kwargs = {}
-        if self.src_lang:
-            kwargs["src_lang"] = self.src_lang
-        stop_watch = self._watch_download(status)
         try:
-            try:
-                path = self._local_path(download=False)
-                tok = AutoTokenizer.from_pretrained(path, **kwargs)
-                model = AutoModelForSeq2SeqLM.from_pretrained(path)
-            except Exception:  # noqa: BLE001  (chưa có trong cache / cache thiếu file)
-                path = self._local_path(download=True)
-                tok = AutoTokenizer.from_pretrained(path, **kwargs)
-                model = AutoModelForSeq2SeqLM.from_pretrained(path)
+            tok = AutoTokenizer.from_pretrained(path, **self._tokenizer_kwargs())
+            model = AutoModelForSeq2SeqLM.from_pretrained(path)
         except Exception as e:  # noqa: BLE001
-            raise TranslatorError(
-                f"Không nạp được mô hình {self.model_name}: {e}. "
-                "Lần chạy đầu cần Internet để tải mô hình (hoặc chạy scripts/download_models.py)."
-            ) from e
-        finally:
-            stop_watch()
+            raise TranslatorError(f"Không nạp được mô hình {self.model_name}: {e}") from e
         if device == "cuda":
             model = model.half()
         model.to(device).eval()
         self._tokenizer, self._model, self._device = tok, model, device
-        log.info("Đã nạp xong %s", self.model_name)
+
+    def _translate_hf(self, batch: list[str]) -> list[str]:
+        import torch
+
+        tok, model = self._tokenizer, self._model
+        gen_kwargs: dict = {
+            "num_beams": settings.num_beams,
+            "early_stopping": True,
+            # Chặn vòng lặp kiểu "chúng ta tính chúng ta tính..." của mô hình nhỏ.
+            "no_repeat_ngram_size": 4,
+        }
+        if self.tgt_lang:
+            tgt_id = tok.convert_tokens_to_ids(self.tgt_lang)
+            if self.tgt_mode == "decoder_start":
+                gen_kwargs["decoder_start_token_id"] = tgt_id
+            else:
+                gen_kwargs["forced_bos_token_id"] = tgt_id
+        enc = tok(batch, return_tensors="pt", padding=True, truncation=True, max_length=512)
+        enc = {k: v.to(self._device) for k, v in enc.items()}
+        # Bản dịch không thể dài hơn ~2,5 lần câu gốc: chặn sinh lan man tới 512 token.
+        in_len = int(enc["input_ids"].shape[1])
+        with torch.inference_mode():
+            out = model.generate(**enc, **gen_kwargs, max_length=min(512, int(in_len * 2.5) + 10))
+        return [d.strip() for d in tok.batch_decode(out, skip_special_tokens=True)]
+
+    # -- chung -------------------------------------------------------------------
+
+    def _load(self, status: StatusFn | None = None) -> None:
+        if self._model is not None:
+            return
+        backend, why = self._choose_backend()
+        if not backend:
+            raise TranslatorError(why)
+        import transformers
+
+        transformers.logging.set_verbosity_error()
+        log.info("Nạp %s bằng backend %s", self.model_name, backend)
+        try:
+            if backend == "ct2":
+                self._load_ct2(status)
+            else:
+                self._load_hf(status)
+        except TranslatorError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            raise TranslatorError(f"Không nạp được mô hình {self.model_name} ({backend}): {e}") from e
+        self._backend = backend
+        log.info("Đã nạp xong %s (%s, %s)", self.model_name, backend, self._device)
         if status:
-            status(f"Đã nạp mô hình ({device.upper()})")
+            status(f"Đã nạp mô hình ({backend.upper()}, {self._device.upper()})")
 
     def translate_batch(self, texts: list[str], glossary: dict[str, str] | None = None) -> list[str]:
         if not texts:
             return []
         with self._lock:
             self._load()
-            import torch
-
-            tok, model = self._tokenizer, self._model
-            gen_kwargs: dict = {
-                "num_beams": settings.num_beams,
-                "early_stopping": True,
-                # Chặn vòng lặp kiểu "chúng ta tính chúng ta tính..." của mô hình nhỏ.
-                "no_repeat_ngram_size": 4,
-            }
-            if self.tgt_lang:
-                tgt_id = tok.convert_tokens_to_ids(self.tgt_lang)
-                if self.tgt_mode == "decoder_start":
-                    gen_kwargs["decoder_start_token_id"] = tgt_id
-                else:
-                    gen_kwargs["forced_bos_token_id"] = tgt_id
-
+            run = self._translate_ct2 if self._backend == "ct2" else self._translate_hf
             # Sắp theo độ dài để giảm padding, rồi trả về đúng thứ tự.
             order = sorted(range(len(texts)), key=lambda i: len(texts[i]))
             results: list[str] = [""] * len(texts)
             bs = max(1, settings.batch_size)
             for start in range(0, len(order), bs):
                 idx = order[start : start + bs]
-                batch = [texts[i] for i in idx]
-                enc = tok(batch, return_tensors="pt", padding=True, truncation=True, max_length=512)
-                enc = {k: v.to(self._device) for k, v in enc.items()}
-                # Bản dịch không thể dài hơn ~2,5 lần câu gốc: chặn sinh lan man tới 512 token.
-                in_len = int(enc["input_ids"].shape[1])
-                with torch.inference_mode():
-                    out = model.generate(**enc, **gen_kwargs, max_length=min(512, int(in_len * 2.5) + 10))
-                decoded = tok.batch_decode(out, skip_special_tokens=True)
-                for i, d in zip(idx, decoded):
-                    results[i] = d.strip()
+                for i, d in zip(idx, run([texts[i] for i in idx])):
+                    results[i] = d
             return results
 
 
