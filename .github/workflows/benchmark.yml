@@ -37,8 +37,11 @@ jobs:
       - name: Tải tập thử FLORES-200 devtest và bài báo mẫu
         run: |
           curl -sSL -o flores.tar.gz https://dl.fbaipublicfiles.com/nllb/flores200_dataset.tar.gz
-          tar xzf flores.tar.gz flores200_dataset/devtest/eng_Latn.devtest flores200_dataset/devtest/vie_Latn.devtest
-          wc -l flores200_dataset/devtest/*.devtest
+          tar tzf flores.tar.gz | head -5
+          mkdir flores && tar xzf flores.tar.gz -C flores --wildcards '*eng_Latn.devtest' '*vie_Latn.devtest'
+          cp "$(find flores -name 'eng_Latn.devtest')" eng.devtest
+          cp "$(find flores -name 'vie_Latn.devtest')" vie.devtest
+          wc -l eng.devtest vie.devtest
           curl -sSL -o attention.pdf https://arxiv.org/pdf/1706.03762v7
 
       - name: Tải mô hình và chuyển sang CTranslate2 int8 (không tính giờ)
@@ -47,8 +50,7 @@ jobs:
       - name: Đo
         run: |
           python scripts/benchmark.py --engine vinai \
-            --src flores200_dataset/devtest/eng_Latn.devtest \
-            --ref flores200_dataset/devtest/vie_Latn.devtest \
+            --src eng.devtest --ref vie.devtest \
             --speed-n 100 --pdf attention.pdf --json benchmark.json | tee bench.log
           sed -n '/^### /,$p' bench.log >> "$GITHUB_STEP_SUMMARY"
 
