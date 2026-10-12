@@ -70,6 +70,7 @@ class Page:
     width: float
     height: float
     regions: list[Region] = field(default_factory=list)
+    scanned: bool = False  # trang ảnh scan, chữ lấy bằng OCR
 
 
 @dataclass
@@ -114,6 +115,7 @@ class Document:
                     "width": p.width,
                     "height": p.height,
                     "regions": [r.to_dict() for r in p.regions],
+                    "scanned": p.scanned,
                 }
                 for p in self.pages
             ],
@@ -126,7 +128,7 @@ class Document:
         pages = [
             Page(
                 index=p["index"], number=p["number"], width=p["width"], height=p["height"],
-                regions=[Region.from_dict(r) for r in p["regions"]],
+                regions=[Region.from_dict(r) for r in p["regions"]], scanned=p.get("scanned", False),
             )
             for p in d["pages"]
         ]

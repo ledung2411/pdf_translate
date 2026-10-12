@@ -34,6 +34,7 @@ from .scientific import (
     looks_mathy,
     parse_glossary,
 )
+from .ocr import OcrError, find_tessdata, is_scanned, ocr_textpage
 from .tm import get_tm
 from .translators import TranslatorError, get_engine
 
@@ -58,6 +59,7 @@ class TranslateOptions:
     post_edit: bool = True  # dùng LLM cục bộ (nếu đang chạy) sửa các câu điểm thấp
     highlight_doubtful: bool = True  # tô vàng đoạn nghi ngờ trong PDF
     use_tm: bool = True  # dùng bản dịch đã duyệt trong bộ nhớ dịch (TM)
+    ocr: bool = True  # tự OCR các trang ảnh scan
 
 
 # Khối văn bản = vùng trong DocIR (giữ tên cũ cho dễ đọc).
@@ -93,15 +95,82 @@ def _split_line_at_gaps(line: dict) -> list[dict]:
     spans = [sp for sp in line.get("spans", []) if sp.get("text", "")]
     if len(spans) < 2:
         return [line]
-    parts: list[list[dict]] = [[spans[0]]]
-    for a, b in zip(spans, spans[1:]):
-        if b["bbox"][0] - a["bbox"][2] > max(a.get("size", 10) * 2.5, 12):
-            parts.append([b])
-        else:
-            parts[-1].append(b)
-    if len(parts) == 1:
+    parts: list[list[dict]] = [[]]
+    prev = None
+    for sp in spans:
+        size = sp.get("size", 10)
+        width = sp["bbox"][2] - sp["bbox"][0]
+        if not sp["text"].strip() and width > max(size * 1.5, 8):
+            # Span "dấu cách" rộng bất thường = khe giữa hai cột (OCR, một số trình xuất PDF)
+            if parts[-1]:
+                parts.append([])
+            prev = None
+            continue
+        if prev is not None and sp["bbox"][0] - prev["bbox"][2] > max(prev.get("size", 10) * 2.5, 12):
+            parts.append([])
+        parts[-1].append(sp)
+        prev = sp
+    parts = [p for p in parts if any(x["text"].strip() for x in p)]
+    if len(parts) <= 1:
         return [line]
     return [{**line, "spans": p, "bbox": _line_bbox(p)} for p in parts]
+
+
+def _find_gutter(lines: list[dict]) -> tuple[float, float] | None:
+    """Khe trống dọc giữa hai cột trong một khối, suy ra từ các dòng hẹp (đã thuộc một cột)."""
+    x0 = min(ln["bbox"][0] for ln in lines)
+    x1 = max(ln["bbox"][2] for ln in lines)
+    width = x1 - x0
+    if width < 100:
+        return None
+    narrow = [ln["bbox"] for ln in lines if ln["bbox"][2] - ln["bbox"][0] < 0.6 * width]
+    if len(narrow) < 4:
+        return None
+    cover = [0] * (int(width) + 1)
+    for bx0, _, bx1, _ in narrow:
+        for x in range(int(bx0 - x0), int(bx1 - x0) + 1):
+            cover[x] += 1
+    best: tuple[int, int] | None = None
+    start = None
+    lo, hi = int(0.3 * width), int(0.7 * width)
+    for x in range(lo, hi + 1):
+        if cover[x] == 0 and start is None:
+            start = x
+        if (cover[x] != 0 or x == hi) and start is not None:
+            if best is None or x - start > best[1] - best[0]:
+                best = (start, x)
+            start = None
+    if best is None or best[1] - best[0] < 5:
+        return None
+    # Mỗi bên khe phải có đủ dòng → đúng là 2 cột chứ không phải chỗ trống ngẫu nhiên
+    g0, g1 = x0 + best[0], x0 + best[1]
+    if g1 - g0 > 0.2 * width:
+        return None
+    # Mỗi bên khe phải là các DÒNG CỘT thật (đủ dài), không phải vài từ lẻ của dòng căn đều.
+    left = [b for b in narrow if b[2] <= g0 + 1 and b[2] - b[0] > 0.3 * (g0 - x0)]
+    right = [b for b in narrow if b[0] >= g1 - 1 and b[2] - b[0] > 0.3 * (x1 - g1)]
+    return (g0, g1) if len(left) >= 3 and len(right) >= 3 else None
+
+
+def _split_at_gutter(lines: list[dict]) -> list[dict]:
+    """Cắt các dòng chạy ngang qua khe giữa hai cột (OCR hay gộp dòng của 2 cột)."""
+    gutter = _find_gutter(lines)
+    if gutter is None:
+        return lines
+    mid = (gutter[0] + gutter[1]) / 2
+    out: list[dict] = []
+    for ln in lines:
+        bx0, _, bx1, _ = ln["bbox"]
+        if not (bx0 < gutter[0] - 1 and bx1 > gutter[1] + 1):
+            out.append(ln)
+            continue
+        left = [sp for sp in ln["spans"] if (sp["bbox"][0] + sp["bbox"][2]) / 2 < mid]
+        right = [sp for sp in ln["spans"] if (sp["bbox"][0] + sp["bbox"][2]) / 2 >= mid]
+        for part in (left, right):
+            part = [sp for sp in part if sp["text"].strip()] and part
+            if part and any(sp["text"].strip() for sp in part):
+                out.append({**ln, "spans": part, "bbox": _line_bbox(part)})
+    return out
 
 
 def _x_overlap(a, b) -> float:
@@ -123,6 +192,7 @@ def _segment_blocks(raw_blocks: list[dict], page_rect: pymupdf.Rect) -> list[dic
         lines = [pl for ln in b.get("lines", []) for pl in _split_line_at_gaps(ln)]
         if not lines:
             continue
+        lines = _split_at_gutter(lines)
         # Gom dòng theo cột: hai dòng cùng cột nếu chồng lấn ngang đủ nhiều.
         cols: list[dict] = []
         for ln in sorted(lines, key=lambda l: (l["bbox"][1], l["bbox"][0])):
@@ -138,9 +208,52 @@ def _segment_blocks(raw_blocks: list[dict], page_rect: pymupdf.Rect) -> list[dic
         if len(cols) == 1:
             out.append({**b, "lines": lines})
             continue
+        # Mẩu chữ hẹp ở lề (watermark arXiv, số dòng, ký tự OCR lạc) tách riêng, không tính là cột.
+        W = page_rect.width
+        narrow = [
+            c for c in cols
+            if c["x"][2] - c["x"][0] < 0.12 * W and (c["x"][2] < 0.15 * W or c["x"][0] > 0.85 * W)
+        ]
+        if narrow and len(cols) - len(narrow) >= 1:
+            for c in narrow:
+                out.append({"type": 0, "bbox": _union([ln["bbox"] for ln in c["lines"]]), "lines": c["lines"]})
+            cols = [c for c in cols if c not in narrow]
+            dropped = {id(ln) for c in narrow for ln in c["lines"]}
+            lines = [ln for ln in lines if id(ln) not in dropped]
+            if len(cols) == 1:
+                out.append({"type": 0, "bbox": _union([ln["bbox"] for ln in lines]), "lines": lines})
+                continue
+        ys = [ln["bbox"][1] for ln in lines]
+        size = max((sp.get("size", 10) for ln in lines for sp in ln["spans"]), default=10)
+        def _wordy(c: dict) -> bool:
+            txt = " ".join(sp["text"] for ln in c["lines"] for sp in ln["spans"])
+            return len(re.findall(r"[A-Za-z]{2,}", txt)) >= 1 and not re.search(r"\d+\.\d+", txt)
+
+        if max(ys) - min(ys) < size * 0.8 and len(cols) == 2 and all(_wordy(c) for c in cols):
+            # Chỉ một hàng (vd. hai tiêu đề mục ở hai cột cùng độ cao) → không phải bảng
+            for c in sorted(cols, key=lambda c: c["x"][0]):
+                out.append({"type": 0, "bbox": _union([ln["bbox"] for ln in c["lines"]]), "lines": c["lines"]})
+            continue
         widths = [c["x"][2] - c["x"][0] for c in cols]
         if len(cols) >= 3 or min(widths) < 0.25 * page_rect.width:
-            out.append({**b, "lines": lines})  # bảng: giữ nguyên để không dịch vỡ bố cục
+            # Cột chữ rộng nhiều dòng (vd. cột trái) nằm chung khối với bảng → tách riêng.
+            prose = [
+                c for c in cols
+                if c["x"][2] - c["x"][0] >= 0.3 * W and len(c["lines"]) >= 3 and _wordy(c)
+            ]
+            others = [c for c in cols if c not in prose]
+            def _numeric(c: dict) -> bool:
+                txt = "".join(sp["text"] for ln in c["lines"] for sp in ln["spans"]).replace(" ", "")
+                return bool(txt) and sum(ch.isdigit() for ch in txt) / len(txt) > 0.3
+
+            if not (prose and others and any(_numeric(c) for c in others)):
+                prose = []  # không có số liệu bên cạnh → không phải "cột chữ + bảng", giữ nguyên
+            for c in prose:
+                out.append({"type": 0, "bbox": _union([ln["bbox"] for ln in c["lines"]]), "lines": c["lines"]})
+            taken = {id(ln) for c in prose for ln in c["lines"]}
+            rest = [ln for ln in lines if id(ln) not in taken]  # giữ thứ tự dòng gốc
+            if rest:  # bảng: giữ nguyên để không dịch vỡ bố cục
+                out.append({"type": 0, "bbox": _union([ln["bbox"] for ln in rest]), "lines": rest})
             continue
         for c in sorted(cols, key=lambda c: c["x"][0]):
             group: list[dict] = []
@@ -164,9 +277,11 @@ def _union(boxes: list) -> tuple[float, float, float, float]:
     )
 
 
-def extract_blocks(page: pymupdf.Page, page_index: int) -> list[TextBlock]:
+def extract_blocks(
+    page: pymupdf.Page, page_index: int, textpage: pymupdf.TextPage | None = None
+) -> list[TextBlock]:
     flags = pymupdf.TEXT_PRESERVE_WHITESPACE | pymupdf.TEXT_MEDIABOX_CLIP
-    data = page.get_text("dict", flags=flags)
+    data = page.get_text("dict", flags=flags, textpage=textpage)
     blocks: list[TextBlock] = []
     for b in _segment_blocks(data.get("blocks", []), page.rect):
         lines_text: list[str] = []
@@ -208,7 +323,8 @@ def extract_blocks(page: pymupdf.Page, page_index: int) -> list[TextBlock]:
                     parts.append(f"{SUP_START}{t.strip()}{SUP_END}")
                 else:
                     parts.append(t)
-                    if is_mono_font(font) or sp.get("flags", 0) & 8:
+                    # Chữ OCR (GlyphLessFont) luôn mang cờ monospace — không phải mã nguồn.
+                    if font != "GlyphLessFont" and (is_mono_font(font) or sp.get("flags", 0) & 8):
                         mono_chars += n
                     size = round(sp.get("size", 10), 1)
                     size_w[size] = size_w.get(size, 0) + n
@@ -545,23 +661,34 @@ def _target_rect(b: TextBlock, blocks: list[TextBlock], page_rect: pymupdf.Rect)
     return rect
 
 
-def render_page(page: pymupdf.Page, blocks: list[TextBlock], fontkit: FontKit) -> None:
+def render_page(page: pymupdf.Page, blocks: list[TextBlock], fontkit: FontKit, scanned: bool = False) -> None:
     todo = [b for b in blocks if b.translation is not None]
     if not todo:
         return
-    # 1) Xóa chữ gốc (chỉ chữ, giữ hình ảnh và nét vẽ).
-    for b in todo:
-        for r in b.span_rects:
-            h = r.height
-            shrink = pymupdf.Rect(r.x0, r.y0 + h * 0.2, r.x1, r.y1 - h * 0.2)
-            if shrink.is_empty:
-                shrink = r
-            page.add_redact_annot(shrink, fill=False, cross_out=False)
-    page.apply_redactions(
-        images=pymupdf.PDF_REDACT_IMAGE_NONE,
-        graphics=pymupdf.PDF_REDACT_LINE_ART_NONE,
-        text=pymupdf.PDF_REDACT_TEXT_REMOVE,
-    )
+    if scanned:
+        # Trang scan: chữ tiếng Anh nằm trong ảnh → tô trắng vùng ảnh dưới mỗi đoạn được dịch.
+        for b in todo:
+            for r in b.line_rects or [b.bbox]:
+                page.add_redact_annot(pymupdf.Rect(r) + (-1, -1, 1, 1), fill=(1, 1, 1), cross_out=False)
+        page.apply_redactions(
+            images=pymupdf.PDF_REDACT_IMAGE_PIXELS,
+            graphics=pymupdf.PDF_REDACT_LINE_ART_NONE,
+            text=pymupdf.PDF_REDACT_TEXT_REMOVE,
+        )
+    else:
+        # 1) Xóa chữ gốc (chỉ chữ, giữ hình ảnh và nét vẽ).
+        for b in todo:
+            for r in b.span_rects:
+                h = r.height
+                shrink = pymupdf.Rect(r.x0, r.y0 + h * 0.2, r.x1, r.y1 - h * 0.2)
+                if shrink.is_empty:
+                    shrink = r
+                page.add_redact_annot(shrink, fill=False, cross_out=False)
+        page.apply_redactions(
+            images=pymupdf.PDF_REDACT_IMAGE_NONE,
+            graphics=pymupdf.PDF_REDACT_LINE_ART_NONE,
+            text=pymupdf.PDF_REDACT_TEXT_REMOVE,
+        )
     # 2) Chèn bản dịch, tự thu nhỏ cỡ chữ nếu bản dịch dài hơn khung.
     for b in todo:
         fam = "vnserif" if b.serif else "vnsans"
@@ -687,7 +814,7 @@ def _select_pages(doc: pymupdf.Document, page_numbers: list[int]) -> None:
         doc.select([n - 1 for n in page_numbers])
 
 
-def analyze_pdf(input_path: Path, opts: TranslateOptions) -> Document:
+def analyze_pdf(input_path: Path, opts: TranslateOptions, progress: ProgressFn | None = None) -> Document:
     """Tầng phân tích: PDF → DocIR (các vùng đã phân loại, chưa dịch)."""
     doc = _open_pdf(input_path)
     n = len(doc)
@@ -701,16 +828,37 @@ def analyze_pdf(input_path: Path, opts: TranslateOptions) -> Document:
     _select_pages(doc, numbers)
 
     ir = Document(source=input_path.name)
+    tessdata: str | None = None
     for i, num in enumerate(numbers):
         page = doc[i]
+        scanned = opts.ocr and is_scanned(page)
+        textpage = None
+        if scanned:
+            if tessdata is None:
+                try:
+                    tessdata = find_tessdata()
+                except OcrError as e:
+                    raise PdfError(f"Trang {num} là ảnh scan, cần OCR nhưng: {e}") from e
+            if progress:
+                progress(0.01, f"Đang nhận dạng chữ (OCR) trang {num}...")
+            textpage = ocr_textpage(page, tessdata)
+        regions = extract_blocks(page, i, textpage)
+        if scanned:
+            for r in regions:
+                r.serif, r.color = True, 0  # OCR không biết font gốc: dùng chữ có chân, màu đen
+                # Dải chữ hẹp và cao (watermark xoay, số dòng ở lề) → OCR ra rác, bỏ qua
+                if r.bbox.width < 0.06 * page.rect.width and r.bbox.height > 3 * r.bbox.width:
+                    r.kind = "rotated"
         ir.pages.append(
             Page(index=i, number=num, width=page.rect.width, height=page.rect.height,
-                 regions=extract_blocks(page, i))
+                 regions=regions, scanned=scanned)
         )
     if sum(len(r.plain) for r in ir.regions) < 30 * len(ir.pages):
         raise PdfError(
-            "PDF gần như không có lớp chữ (có thể là bản scan/ảnh). "
-            "Hãy chạy OCR trước (ví dụ: ocrmypdf input.pdf output.pdf) rồi dịch lại."
+            "PDF gần như không có lớp chữ (có thể là bản scan/ảnh) và OCR không nhận được chữ. "
+            "Hãy thử bản scan rõ nét hơn."
+            if opts.ocr else
+            "PDF gần như không có lớp chữ (có thể là bản scan/ảnh). Hãy bật OCR rồi dịch lại."
         )
     if opts.skip_references:
         mark_references(ir.regions)
@@ -821,7 +969,7 @@ def render_outputs(
     for p in ir.pages:
         if report:
             report(0.88 + 0.09 * p.index / max(len(ir.pages), 1), f"Đang dựng trang {p.index + 1}/{len(ir.pages)}...")
-        render_page(doc[p.index], p.regions, fontkit)
+        render_page(doc[p.index], p.regions, fontkit, p.scanned)
         if highlight:
             annotate_doubtful(doc[p.index], p.regions)
 
@@ -862,7 +1010,7 @@ def translate_pdf(
 
     out_dir.mkdir(parents=True, exist_ok=True)
     report(0.01, "Đang phân tích bố cục PDF...")
-    ir = analyze_pdf(input_path, opts)
+    ir = analyze_pdf(input_path, opts, report)
     translate_document(ir, opts, report)
     ir.save(out_dir / IR_FILENAME)
     outputs = render_outputs(ir, input_path, out_dir, opts.make_bilingual, report, opts.highlight_doubtful)

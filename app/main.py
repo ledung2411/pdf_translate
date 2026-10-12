@@ -84,6 +84,7 @@ async def create_job(
     make_bilingual: bool = Form(True),
     post_edit: bool = Form(True),
     highlight_doubtful: bool = Form(True),
+    ocr: bool = Form(True),
 ) -> dict:
     engine = engine or default_engine_key()
     try:
@@ -105,6 +106,7 @@ async def create_job(
         make_bilingual=make_bilingual,
         post_edit=post_edit,
         highlight_doubtful=highlight_doubtful,
+        ocr=ocr,
     )
     job = manager.submit(file.filename or "document.pdf", data, opts)
     return job.public()

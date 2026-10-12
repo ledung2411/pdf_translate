@@ -27,6 +27,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--no-glossary", action="store_true", help="không dùng bảng thuật ngữ mặc định")
     ap.add_argument("--glossary", type=Path, help="file thuật ngữ riêng (term = bản dịch)")
     ap.add_argument("--no-bilingual", action="store_true", help="không tạo PDF song ngữ")
+    ap.add_argument("--no-ocr", action="store_true", help="không OCR trang ảnh scan")
     args = ap.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -43,6 +44,7 @@ def main(argv: list[str] | None = None) -> int:
         use_glossary=not args.no_glossary,
         custom_glossary=args.glossary.read_text(encoding="utf-8") if args.glossary else "",
         make_bilingual=not args.no_bilingual,
+        ocr=not args.no_ocr,
     )
 
     last = [""]
