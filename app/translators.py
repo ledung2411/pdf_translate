@@ -86,6 +86,17 @@ _TOKENIZER_FILES = [
 ]
 
 
+def _patch_transformers_for_ct2() -> None:
+    """transformers 5.x bỏ ``normalize_before`` khỏi BartConfig/MBartConfig nhưng bộ chuyển đổi
+    CTranslate2 (≤4.8) vẫn đọc thuộc tính này. mBART (VinAI, NLLB-style) dùng pre-norm, BART post-norm."""
+    import transformers
+
+    for name, value in (("MBartConfig", True), ("BartConfig", False)):
+        cls = getattr(transformers, name, None)
+        if cls is not None and not hasattr(cls(), "normalize_before"):
+            setattr(cls, "normalize_before", value)
+
+
 def _has_module(name: str) -> tuple[bool, str]:
     try:
         __import__(name)
@@ -257,14 +268,26 @@ class HFSeq2SeqTranslator(Translator):
             status(f"Đang chuyển {self.model_name} sang CTranslate2 int8 (chỉ lần đầu, 1–3 phút)...")
         log.info("Chuyển đổi %s -> %s", src, out)
         tmp.parent.mkdir(parents=True, exist_ok=True)
+        _patch_transformers_for_ct2()
         TransformersConverter(src).convert(str(tmp), quantization="int8", force=True)
-        AutoTokenizer.from_pretrained(src, **self._tokenizer_kwargs()).save_pretrained(str(tmp))
+        tok = AutoTokenizer.from_pretrained(src, **self._tokenizer_kwargs())
+        tok.save_pretrained(str(tmp))
+        cfg_path = tmp / "config.json"
+        cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+        # Một số tokenizer không khai báo bos/unk → CTranslate2 từ chối nạp config có giá trị null.
+        defaults = {
+            "bos_token": tok.bos_token or "<s>",
+            "eos_token": tok.eos_token or "</s>",
+            "unk_token": tok.unk_token or "<unk>",
+            "decoder_start_token": tok.eos_token or "</s>",
+        }
+        for key, value in defaults.items():
+            if key in cfg and cfg[key] is None:
+                cfg[key] = value
         if self.tgt_mode == "decoder_start" and self.tgt_lang:
             # VinAI (mBART-50) bắt đầu giải mã trực tiếp bằng mã ngôn ngữ đích.
-            cfg_path = tmp / "config.json"
-            cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
             cfg["decoder_start_token"] = self.tgt_lang
-            cfg_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+        cfg_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
         if out.exists():
             import shutil
 

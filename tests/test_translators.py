@@ -299,3 +299,58 @@ def test_real_ctranslate2_tiny_model(monkeypatch, tmp_path):
         # Qua cả pipeline: bản dịch hỏng (mô hình ngẫu nhiên) bị phát hiện, không in rác lặp
         res = TextTranslator(t, None, use_cache=False).translate_texts(["The neural network is good."])
         assert res and "cell cell cell" not in res[0]
+
+
+# ---------------- Chuyển đổi thật HF → CTranslate2 (cần torch) ----------------
+
+
+@pytest.mark.parametrize("kind", ["marian", "mbart50"])
+def test_real_conversion_matches_transformers(kind, monkeypatch, tmp_path):
+    pytest.importorskip("torch")
+    pytest.importorskip("ctranslate2")
+    pytest.importorskip("sentencepiece")
+    import json as _json
+
+    from app.config import settings
+
+    from .fixtures.hf_tiny import build_marian, build_mbart50
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    monkeypatch.setattr(settings, "num_beams", 1)
+    src = (build_marian if kind == "marian" else build_mbart50)(tmp_path / kind)
+    lang = {} if kind == "marian" else {"src_lang": "en_XX", "tgt_lang": "vi_VN", "tgt_mode": "decoder_start"}
+    texts = ["the solar cell is good", "deep learning model works well"]
+
+    monkeypatch.setattr(settings, "backend", "hf")
+    hf = HFSeq2SeqTranslator(kind, "", "", str(src), **lang)
+    ref = hf.translate_batch(texts)
+
+    monkeypatch.setattr(settings, "backend", "ct2")
+    ct = HFSeq2SeqTranslator(kind, "", "", str(src), **lang)
+    msgs = []
+    ct.prepare(msgs.append)
+    assert ct._backend == "ct2" and any("CTranslate2" in m for m in msgs)
+    cfg = _json.loads((ct.ct2_dir() / "config.json").read_text())
+    if kind == "mbart50":
+        assert cfg["decoder_start_token"] == "vi_VN"
+    out = ct.translate_batch(texts)
+    assert len(out) == 2 and not any("vi_VN" in o for o in out)
+    if kind == "marian":
+        # int8 có thể lệch vài token cuối so với float32, nhưng phần đầu phải trùng
+        assert all(b and a[:8] == b[:8] for a, b in zip(ref, out))
+    else:
+        # So chuỗi token thô: giải mã CTranslate2 (decoder_start_token=vi_VN) phải giống
+        # transformers generate(decoder_start_token_id=vi_VN).
+        import torch
+        from transformers import AutoTokenizer, MBartForConditionalGeneration
+
+        tok = AutoTokenizer.from_pretrained(str(src), src_lang="en_XX")
+        model = MBartForConditionalGeneration.from_pretrained(str(src))
+        enc = tok([texts[0]], return_tensors="pt")
+        with torch.no_grad():
+            ids = model.generate(**enc, num_beams=1, do_sample=False, max_length=10,
+                                 decoder_start_token_id=tok.convert_tokens_to_ids("vi_VN"))
+        hf_tokens = tok.convert_ids_to_tokens(ids[0])[1:]  # bỏ vi_VN ở đầu
+        res = ct._model.translate_batch([tok.convert_ids_to_tokens(tok.encode(texts[0]))], beam_size=1,
+                                        max_decoding_length=9)
+        assert res[0].hypotheses[0][:5] == [t for t in hf_tokens if t != "</s>"][:5]
