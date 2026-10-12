@@ -585,13 +585,48 @@ def render_page(page: pymupdf.Page, blocks: list[TextBlock], fontkit: FontKit) -
             log.warning("Không ghi được khối trên trang %d: %s", b.page_index + 1, e)
 
 
-def make_bilingual(original: pymupdf.Document, translated: pymupdf.Document) -> pymupdf.Document:
+def is_doubtful(r: TextBlock) -> bool:
+    """Đoạn nên được người đọc kiểm tra lại (điểm thấp / phải giữ tiếng Anh), trừ khi đã sửa tay."""
+    return (
+        r.translation is not None
+        and "edited" not in r.flags
+        and ("low_quality" in r.flags or "kept_english" in r.flags)
+    )
+
+
+def annotate_doubtful(page: pymupdf.Page, regions: list[TextBlock], dx: float = 0.0) -> int:
+    """Tô vàng (chú thích PDF, có thể ẩn khi in) các đoạn nghi ngờ; ``dx`` để dời sang nửa phải bản song ngữ."""
+    n = 0
+    for r in regions:
+        if not is_doubtful(r):
+            continue
+        rect = pymupdf.Rect(r.bbox) + (dx, 0, dx, 0)
+        annot = page.add_rect_annot(rect)
+        annot.set_colors(stroke=(1, 0.75, 0), fill=(1, 0.92, 0.25))
+        annot.set_border(width=0.5)
+        annot.set_opacity(0.28)
+        reason = "; ".join(r.notes) if r.notes else "bản dịch có thể chưa chính xác"
+        if "kept_english" in r.flags:
+            reason = "Có câu giữ nguyên tiếng Anh vì bản dịch máy bị hỏng. " + reason
+        score = f" (điểm {r.score:.2f})" if r.score is not None else ""
+        annot.set_info(title="Cần kiểm tra lại", content=reason + score)
+        annot.update()
+        n += 1
+    return n
+
+
+def make_bilingual(
+    original: pymupdf.Document, translated: pymupdf.Document,
+    doubtful: list[list[TextBlock]] | None = None,
+) -> pymupdf.Document:
     out = pymupdf.open()
     for i in range(len(translated)):
         r = original[i].rect
         page = out.new_page(width=r.width * 2, height=r.height)
         page.show_pdf_page(pymupdf.Rect(0, 0, r.width, r.height), original, i)
         page.show_pdf_page(pymupdf.Rect(r.width, 0, r.width * 2, r.height), translated, i)
+        if doubtful is not None and i < len(doubtful):
+            annotate_doubtful(page, doubtful[i], dx=r.width)
     return out
 
 
@@ -757,7 +792,7 @@ def translate_document(ir: Document, opts: TranslateOptions, report: ProgressFn)
 
 def render_outputs(
     ir: Document, input_path: Path, out_dir: Path, make_bilingual_pdf: bool = True,
-    report: ProgressFn | None = None,
+    report: ProgressFn | None = None, highlight: bool = True,
 ) -> dict[str, Path]:
     """Tầng dựng: DocIR + PDF gốc → PDF dịch, PDF song ngữ, Markdown."""
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -771,6 +806,8 @@ def render_outputs(
         if report:
             report(0.88 + 0.09 * p.index / max(len(ir.pages), 1), f"Đang dựng trang {p.index + 1}/{len(ir.pages)}...")
         render_page(doc[p.index], p.regions, fontkit)
+        if highlight:
+            annotate_doubtful(doc[p.index], p.regions)
 
     if report:
         report(0.97, "Đang lưu kết quả...")
@@ -780,7 +817,9 @@ def render_outputs(
     doc.save(str(path), garbage=3, deflate=True)
     outputs["translated"] = path
     if make_bilingual_pdf:
-        bi = make_bilingual(original, pymupdf.open(str(path)))
+        bi = make_bilingual(
+            original, pymupdf.open(str(path)), [p.regions for p in ir.pages] if highlight else None
+        )
         p2 = out_dir / f"{stem}_song_ngu.pdf"
         bi.save(str(p2), garbage=3, deflate=True)
         outputs["bilingual"] = p2
@@ -810,6 +849,6 @@ def translate_pdf(
     ir = analyze_pdf(input_path, opts)
     translate_document(ir, opts, report)
     ir.save(out_dir / IR_FILENAME)
-    outputs = render_outputs(ir, input_path, out_dir, opts.make_bilingual, report)
+    outputs = render_outputs(ir, input_path, out_dir, opts.make_bilingual, report, opts.highlight_doubtful)
     report(1.0, "Hoàn tất")
     return outputs

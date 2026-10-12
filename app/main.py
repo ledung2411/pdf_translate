@@ -69,6 +69,8 @@ async def create_job(
     use_glossary: bool = Form(True),
     custom_glossary: str = Form(""),
     make_bilingual: bool = Form(True),
+    post_edit: bool = Form(True),
+    highlight_doubtful: bool = Form(True),
 ) -> dict:
     engine = engine or default_engine_key()
     try:
@@ -88,6 +90,8 @@ async def create_job(
         use_glossary=use_glossary,
         custom_glossary=custom_glossary[:200_000],
         make_bilingual=make_bilingual,
+        post_edit=post_edit,
+        highlight_doubtful=highlight_doubtful,
     )
     job = manager.submit(file.filename or "document.pdf", data, opts)
     return job.public()

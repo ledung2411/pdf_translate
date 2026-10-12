@@ -31,7 +31,7 @@ def test_block_classification(sample):
 
 
 def test_translate_pdf_outputs(sample, tmp_path):
-    out = translate_pdf(sample, tmp_path, TranslateOptions(engine="mock"))
+    out = translate_pdf(sample, tmp_path, TranslateOptions(engine="mock", highlight_doubtful=False))
     assert set(out) == {"translated", "bilingual", "markdown"}
     vi = pymupdf.open(str(out["translated"]))
     text = vi[0].get_text()
@@ -122,3 +122,22 @@ def test_pdf_without_paragraphs_reports_error(tmp_path):
     doc.save(str(p))
     with pytest.raises(PdfError, match="Không tìm thấy đoạn văn"):
         translate_pdf(p, tmp_path / "o", TranslateOptions(engine="mock"))
+
+
+def test_doubtful_regions_highlighted(sample, tmp_path):
+    from app.ir import Document
+    from app.pdf_processor import IR_FILENAME
+
+    # Engine giả lập trả về câu còn tiếng Anh → bị chấm điểm thấp → tô vàng
+    out = translate_pdf(sample, tmp_path, TranslateOptions(engine="mock"))
+    ir = Document.load(tmp_path / IR_FILENAME)
+    low = [r for r in ir.regions if "low_quality" in r.flags]
+    assert low and all(r.score is not None and r.score < 0.6 and r.notes for r in low)
+    vi = pymupdf.open(str(out["translated"]))
+    annots = [(a.info["title"], a.info["content"]) for a in vi[0].annots()]
+    assert len(annots) == len(low)
+    assert annots[0][0] == "Cần kiểm tra lại" and "điểm" in annots[0][1]
+    bi = pymupdf.open(str(out["bilingual"]))
+    half = pymupdf.open(str(sample))[0].rect.width
+    bi_rects = [a.rect for a in bi[0].annots()]
+    assert len(bi_rects) == len(low) and all(r.x0 >= half for r in bi_rects)  # nằm ở nửa bản dịch

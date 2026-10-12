@@ -124,3 +124,4 @@ th { position: sticky; top: 0; background: var(--card); }
 .terms td input { width: 100%; font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; }
 .terms td.num { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
 .badge { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 99px; background: var(--accent-soft); color: var(--accent); margin-left: 6px; }
+.quality { margin-top: 12px; padding: 10px 12px; border-radius: 8px; background: var(--accent-soft); }

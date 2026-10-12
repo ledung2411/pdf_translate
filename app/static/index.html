@@ -52,6 +52,9 @@
           <label><input id="skip-refs" type="checkbox" checked /> <span>Giữ nguyên mục <em>Tài liệu tham khảo</em></span></label>
           <label><input id="use-gloss" type="checkbox" checked /> Dùng bảng thuật ngữ khoa học</label>
           <label><input id="bilingual" type="checkbox" checked /> Tạo thêm bản song ngữ (gốc | dịch)</label>
+          <label><input id="highlight" type="checkbox" checked /> Tô vàng đoạn nghi ngờ dịch sai</label>
+          <label title="Cần chạy Ollama / llama.cpp / LM Studio trên máy"><input id="post-edit" type="checkbox" checked />
+            <span>LLM cục bộ sửa câu dịch kém <small id="llm-state" class="muted"></small></span></label>
         </div>
 
         <details id="terms-box" class="terms">
@@ -83,6 +86,7 @@
         </div>
         <div class="bar"><div id="job-bar"></div></div>
         <div id="job-error" class="error hidden"></div>
+        <div id="quality" class="quality hidden"></div>
         <div id="downloads" class="downloads hidden">
           <a id="dl-translated" class="btn primary" href="#">Tải PDF tiếng Việt</a>
           <a id="dl-bilingual" class="btn" href="#">Tải PDF song ngữ</a>

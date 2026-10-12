@@ -13,7 +13,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from .config import settings
-from .pdf_processor import PdfError, TranslateOptions, translate_pdf
+from .ir import Document
+from .pdf_processor import IR_FILENAME, PdfError, TranslateOptions, is_doubtful, translate_pdf
 from .translators import TranslatorError
 
 log = logging.getLogger(__name__)
@@ -32,6 +33,7 @@ class Job:
     started: float | None = None
     finished: float | None = None
     outputs: dict[str, str] = field(default_factory=dict)
+    summary: dict = field(default_factory=dict)  # thống kê chất lượng sau khi dịch
 
     @property
     def dir(self) -> Path:
@@ -49,6 +51,22 @@ class Job:
         if self.started:
             d["elapsed"] = round((self.finished or time.time()) - self.started, 1)
         return d
+
+
+def quality_summary(ir_path: Path) -> dict:
+    try:
+        ir = Document.load(ir_path)
+    except Exception:  # noqa: BLE001
+        return {}
+    texts = [r for r in ir.regions if r.translation is not None]
+    scores = [r.score for r in texts if r.score is not None]
+    return {
+        "translated": len(texts),
+        "doubtful": sum(1 for r in texts if is_doubtful(r)),
+        "post_edited": sum(1 for r in texts if "post_edited" in r.flags),
+        "edited": sum(1 for r in texts if "edited" in r.flags),
+        "avg_score": round(sum(scores) / len(scores), 3) if scores else None,
+    }
 
 
 class JobManager:
@@ -96,6 +114,7 @@ class JobManager:
             try:
                 outputs = translate_pdf(job.input_path, job.dir, job.options, progress)
                 job.outputs = {k: str(v) for k, v in outputs.items()}
+                job.summary = quality_summary(job.dir / IR_FILENAME)
                 job.status, job.progress, job.message = "done", 1.0, "Hoàn tất"
             except (PdfError, TranslatorError) as e:
                 job.status, job.error, job.message = "error", str(e), "Lỗi"

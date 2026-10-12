@@ -39,6 +39,8 @@ async function loadEngines() {
     }
     sel.value = engines.some((e) => e.key === saved) ? saved : data.default;
     showEngineDesc();
+    const llm = engines.find((e) => e.key === "llm");
+    $("#llm-state").textContent = llm && llm.available ? "(đang chạy)" : "(chưa chạy — sẽ bỏ qua)";
   } catch (err) {
     sel.innerHTML = '<option value="">Không tải được danh sách mô hình</option>';
   }
@@ -83,7 +85,7 @@ $("#file").addEventListener("change", (e) => setFile(e.target.files[0]));
 drop.addEventListener("drop", (e) => setFile(e.dataTransfer.files[0]));
 
 // Ghi nhớ tuỳ chọn
-for (const id of ["skip-refs", "use-gloss", "bilingual"]) {
+for (const id of ["skip-refs", "use-gloss", "bilingual", "highlight", "post-edit"]) {
   const el = $("#" + id);
   el.checked = store.get("opt-" + id, el.checked ? "1" : "0") === "1";
   el.addEventListener("change", () => store.set("opt-" + id, el.checked ? "1" : "0"));
@@ -181,6 +183,8 @@ $("#pdf-form").addEventListener("submit", async (e) => {
   fd.append("skip_references", $("#skip-refs").checked);
   fd.append("use_glossary", $("#use-gloss").checked);
   fd.append("make_bilingual", $("#bilingual").checked);
+  fd.append("highlight_doubtful", $("#highlight").checked);
+  fd.append("post_edit", $("#post-edit").checked);
   fd.append("custom_glossary", $("#custom-gloss").value + "\n" + termGlossaryLines().join("\n"));
 
   $("#submit").disabled = true;
@@ -240,6 +244,17 @@ function showJob(job) {
       "\n\nĐể chẩn đoán, chạy trong thư mục dự án: python -m app.doctor --try vinai";
   }
 
+  const q = $("#quality");
+  const sm = job.summary || {};
+  q.classList.toggle("hidden", !(job.status === "done" && sm.translated));
+  if (job.status === "done" && sm.translated) {
+    const parts = [`${sm.translated} đoạn đã dịch`];
+    if (sm.avg_score != null) parts.push(`điểm chất lượng trung bình ${Math.round(sm.avg_score * 100)}/100`);
+    if (sm.post_edited) parts.push(`${sm.post_edited} đoạn được LLM sửa`);
+    parts.push(sm.doubtful ? `<b>${sm.doubtful} đoạn nghi ngờ</b> (tô vàng trong PDF)` : "không có đoạn nghi ngờ");
+    q.innerHTML = parts.join(" · ") +
+      (sm.doubtful || sm.translated ? ` — <a href="editor.html?job=${job.id}">Mở trang sửa bản dịch</a>` : "");
+  }
   const dl = $("#downloads");
   const done = job.status === "done";
   dl.classList.toggle("hidden", !done);
