@@ -132,6 +132,8 @@ def test_is_degenerate():
     assert is_degenerate("Advanced Science", "Hệ Lục Hệ Hệ Hệ Hệ Hệ Hệ")
     assert is_degenerate("RESEARCH ARTICLE", "thay_ hạ_ _ _ bitS_ ____")
     assert is_degenerate("We first compute x.", "Chúng ta đầu tiên tiên chúng ta tính chúng ta tính chúng ta tính chúng ta tính")
+    assert is_degenerate("Data model.", "model model model model deep")
+    assert not is_degenerate("A 1 1 1 matrix", "ma trận 1 1 1")
     assert not is_degenerate(
         "We propose a novel framework for cortical surface reconstruction.",
         "Chúng tôi đề xuất một khung mới để tái tạo bề mặt vỏ não.",

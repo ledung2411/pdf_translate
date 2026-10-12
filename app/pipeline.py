@@ -105,12 +105,13 @@ def is_degenerate(src: str, out: str) -> bool:
     if "___" in out or len(out) > 3 * len(src) + 40:
         return True
     words = out.split()
+    # Một từ lặp liền 3 lần ("model model model") gần như chắc chắn là lỗi sinh lặp.
+    run = 1
+    for a, b in zip(words, words[1:]):
+        run = run + 1 if a.lower() == b.lower() and any(c.isalpha() for c in a) else 1
+        if run >= 3:
+            return True
     if len(words) >= 6:
-        run = 1
-        for a, b in zip(words, words[1:]):
-            run = run + 1 if a.lower() == b.lower() else 1
-            if run >= 4:
-                return True
         for n in (2, 3, 4):
             grams = [tuple(w.lower() for w in words[i : i + n]) for i in range(len(words) - n + 1)]
             if grams and max(grams.count(g) for g in set(grams)) >= 4 and len(words) < 12 * n:

@@ -269,3 +269,33 @@ def test_ct2_nllb_uses_target_prefix_and_strips_it(fake_ct2):
 def test_ct2_missing_conversion_without_torch_explains(fake_ct2):
     ok, why = HFSeq2SeqTranslator("vinai", "", "", "vinai/x").available()
     assert not ok and "convert_ct2.py vinai" in why
+
+
+# ---------------- CTranslate2 thật với mô hình tí hon (không cần torch) ----------------
+
+
+def test_real_ctranslate2_tiny_model(monkeypatch, tmp_path):
+    pytest.importorskip("ctranslate2")
+    pytest.importorskip("tokenizers")
+    pytest.importorskip("transformers")
+    from app.config import settings
+    from app.pipeline import TextTranslator
+
+    from .fixtures.ct2_tiny import build
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    monkeypatch.setattr(settings, "backend", "ct2")
+    for key, start in (("opus", None), ("vinai", "vi_VN")):
+        t = HFSeq2SeqTranslator(key, "", "", f"tiny/{key}", src_lang=None,
+                                tgt_lang="vi_VN" if start else None, tgt_mode="decoder_start" if start else None)
+        build(str(t.ct2_dir()), start)
+        assert t.available() == (True, "")
+        msgs = []
+        t.prepare(msgs.append)
+        assert t._backend == "ct2" and "CT2" in msgs[-1]
+        out = t.translate_batch(["hello world", "the solar cell is good", "deep learning model"])
+        assert len(out) == 3 and all(isinstance(o, str) for o in out)
+        assert not any("vi_VN" in o or "</s>" in o for o in out)  # mã ngôn ngữ / token đặc biệt bị bỏ
+        # Qua cả pipeline: bản dịch hỏng (mô hình ngẫu nhiên) bị phát hiện, không in rác lặp
+        res = TextTranslator(t, None, use_cache=False).translate_texts(["The neural network is good."])
+        assert res and "cell cell cell" not in res[0]
