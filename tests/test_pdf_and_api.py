@@ -32,7 +32,7 @@ def test_block_classification(sample):
 
 def test_translate_pdf_outputs(sample, tmp_path):
     out = translate_pdf(sample, tmp_path, TranslateOptions(engine="mock", highlight_doubtful=False))
-    assert set(out) == {"translated", "bilingual", "markdown"}
+    assert set(out) == {"translated", "bilingual", "markdown", "docx"}
     vi = pymupdf.open(str(out["translated"]))
     text = vi[0].get_text()
     assert "Giới thiệu" in text and "Tài liệu tham khảo" in text
