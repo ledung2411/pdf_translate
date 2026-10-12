@@ -42,6 +42,7 @@ class Region:
     id: str = ""
     score: float | None = None  # điểm chất lượng bản dịch 0..1 (thấp nhất trong các câu của vùng)
     notes: list[str] = field(default_factory=list)  # lý do bị trừ điểm
+    math_spans: list[str] = field(default_factory=list)  # công thức nội dòng (để in nghiêng khi dựng)
 
     @property
     def plain(self) -> str:

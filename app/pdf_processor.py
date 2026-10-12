@@ -267,7 +267,40 @@ def _segment_blocks(raw_blocks: list[dict], page_rect: pymupdf.Rect) -> list[dic
                 group.append(ln)
             if group:
                 out.append({"type": 0, "bbox": _union([g["bbox"] for g in group]), "lines": group})
-    return out
+    return [part for blk in out for part in _split_math_lines(blk)]
+
+
+_EQ_NUMBER_RE = re.compile(r"\(\s*\d+(?:\.\d+)?[a-z]?\s*\)\s*$")
+
+
+def _is_math_line(line: dict) -> bool:
+    """Dòng công thức đứng riêng: phần lớn ký tự thuộc font toán, hoặc dạng "… = … (3)" không có câu chữ."""
+    spans = [sp for sp in line.get("spans", []) if sp.get("text", "").strip()]
+    text = "".join(sp["text"] for sp in spans).strip()
+    if not text or has_prose(text):
+        return False
+    total = sum(len(sp["text"].strip()) for sp in spans)
+    math = sum(len(sp["text"].strip()) for sp in spans if is_math_font(sp.get("font", "")) or looks_mathy(sp["text"]))
+    if total and math / total > 0.6 and len(re.findall(r"[A-Za-z]{4,}", text)) <= 2:
+        return True
+    return bool(_EQ_NUMBER_RE.search(text) and re.search(r"[=<>≤≥≈]", text))
+
+
+def _split_math_lines(block: dict) -> list[dict]:
+    """Tách các dòng công thức khỏi đoạn văn bị gộp chung khối → công thức giữ nguyên bản gốc."""
+    lines = block.get("lines", [])
+    if len(lines) < 2:
+        return [block]
+    flags = [_is_math_line(ln) for ln in lines]
+    if not any(flags) or all(flags):
+        return [block]
+    groups: list[tuple[bool, list[dict]]] = []
+    for ln, is_math in zip(lines, flags):
+        if groups and groups[-1][0] == is_math:
+            groups[-1][1].append(ln)
+        else:
+            groups.append((is_math, [ln]))
+    return [{"type": 0, "bbox": _union([ln["bbox"] for ln in g]), "lines": g} for _, g in groups]
 
 
 def _union(boxes: list) -> tuple[float, float, float, float]:
@@ -293,6 +326,7 @@ def extract_blocks(
         rotated = False
         line_boxes: list[pymupdf.Rect] = []
         table_lines = 0
+        math_pieces: list[str] = []
 
         for line in b.get("lines", []):
             dx, dy = line.get("dir", (1, 0))
@@ -343,6 +377,7 @@ def extract_blocks(
             if line_text.strip():
                 lines_text.append(line_text)
                 line_boxes.append(pymupdf.Rect(line["bbox"]))
+                math_pieces.extend(m.strip() for m in re.findall(f"{MATH_START}(.*?){MATH_END}", line_text) if m.strip())
 
         if not lines_text:
             continue
@@ -359,6 +394,8 @@ def extract_blocks(
             kind = "rotated"
         elif _is_table_like(line_boxes, table_lines, font_size):
             kind = "table"
+        elif all(_is_math_line(ln) for ln in b.get("lines", []) if "".join(sp.get("text", "") for sp in ln.get("spans", [])).strip()):
+            kind = "math"  # dòng công thức đứng riêng (kể cả chữ OCR không có font toán)
         elif math_chars and not stats.text.strip():
             kind = "math"
         else:
@@ -377,6 +414,7 @@ def extract_blocks(
                 align=_detect_align(line_boxes, pymupdf.Rect(b["bbox"])),
                 span_rects=span_rects,
                 line_rects=line_boxes,
+                math_spans=list(dict.fromkeys(math_pieces)),
             )
         )
     return merge_blocks(blocks)
@@ -603,11 +641,29 @@ def get_fontkit() -> FontKit:
 # ---------------------------------------------------------------------------
 
 
-def _to_html(text: str) -> str:
-    s = html.escape(text, quote=False)
-    s = s.replace(SUP_START, "<sup>").replace(SUP_END, "</sup>")
-    s = s.replace(MATH_START, "").replace(MATH_END, "")
-    return s
+def _to_html(text: str, math_spans: list[str] | None = None) -> str:
+    """Bản dịch → HTML cho insert_htmlbox; công thức nội dòng in nghiêng kiểu LaTeX."""
+    text = text.replace(MATH_START, "").replace(MATH_END, "")
+    marks: list[tuple[int, int]] = []
+    for m in sorted(set(math_spans or []), key=len, reverse=True):
+        if len(m) == 1 and not (m.isalpha() or m in "αβγδεθλμσφψω"):
+            continue  # ký hiệu đơn lẻ (=, +) không cần đổi kiểu chữ
+        pat = re.escape(m)
+        if m[:1].isalnum():
+            pat = r"(?<![\w])" + pat
+        if m[-1:].isalnum():
+            pat = pat + r"(?![\w])"
+        for hit in re.finditer(pat, text):
+            if all(hit.end() <= a or hit.start() >= b for a, b in marks):
+                marks.append((hit.start(), hit.end()))
+    out, pos = [], 0
+    for a, b in sorted(marks):
+        out.append(html.escape(text[pos:a], quote=False))
+        out.append(f'<span class="m">{html.escape(text[a:b], quote=False)}</span>')
+        pos = b
+    out.append(html.escape(text[pos:], quote=False))
+    s = "".join(out)
+    return s.replace(SUP_START, "<sup>").replace(SUP_END, "</sup>")
 
 
 def _color_hex(c: int) -> str:
@@ -701,13 +757,13 @@ def render_page(page: pymupdf.Page, blocks: list[TextBlock], fontkit: FontKit, s
             f"font-weight:{'bold' if b.bold else 'normal'};"
             f"font-style:{'italic' if b.italic else 'normal'};"
         )
-        css = fontkit.css + f"\nbody{{margin:0;padding:0;}} .b{{{style}}} sup{{font-size:70%;}}"
+        css = fontkit.css + f"\nbody{{margin:0;padding:0;}} .b{{{style}}} sup{{font-size:70%;}} .m{{font-style:italic;}}"
         rect = _target_rect(b, blocks, page.rect)
         # Nới nhẹ khung để chữ có dấu tiếng Việt không bị cắt.
         rect.y1 += b.font_size * 0.15
         try:
             page.insert_htmlbox(
-                rect, f'<div class="b">{_to_html(b.translation)}</div>', css=css,
+                rect, f'<div class="b">{_to_html(b.translation, b.math_spans)}</div>', css=css,
                 archive=fontkit.archive, scale_low=0,
             )
         except Exception as e:  # noqa: BLE001
