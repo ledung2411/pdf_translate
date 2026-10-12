@@ -1,0 +1,62 @@
+# Kiểm thử bộ cài trên Windows thật và đóng gói bản zip cho người dùng Windows.
+name: Windows
+
+on:
+  push:
+    branches: [main, "claude/**"]
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    env:
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cài đặt bằng windows/install.ps1 (bỏ qua tải mô hình)
+        shell: powershell
+        run: .\windows\install.ps1 -NoShortcut -NoStart -SkipModels
+
+      - name: Dịch thử PDF mẫu (engine giả lập)
+        shell: powershell
+        env:
+          PDFTR_ENABLE_MOCK: "1"
+          PDFTR_LAYOUT: "off"
+        run: |
+          .\.venv\Scripts\python.exe tests\make_sample_pdf.py sample.pdf
+          .\.venv\Scripts\python.exe -m app.cli sample.pdf -e mock -o out
+          if (-not (Test-Path out\sample_vi.pdf)) { throw "thiếu PDF dịch" }
+          if (-not (Test-Path out\sample_vi.docx)) { throw "thiếu file Word" }
+
+      - name: Kiểm tra launcher (server + API)
+        shell: powershell
+        run: |
+          $p = Start-Process .\.venv\Scripts\python.exe -ArgumentList "-m","app.launcher","--no-browser" -PassThru
+          $ok = $false
+          for ($i = 0; $i -lt 30 -and -not $ok; $i++) {
+            Start-Sleep 2
+            try { $ok = (Invoke-WebRequest http://localhost:8000/api/engines -UseBasicParsing).StatusCode -eq 200 } catch {}
+          }
+          Stop-Process $p.Id -Force
+          if (-not $ok) { throw "server không khởi động" }
+
+      - name: Đóng gói zip
+        shell: powershell
+        run: git archive --format=zip --prefix=pdf_translate/ -o pdf_translate-windows.zip HEAD
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pdf_translate-windows
+          path: pdf_translate-windows.zip
+
+      - name: Đính kèm vào Release (khi đẩy tag v*)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: pdf_translate-windows.zip

@@ -18,7 +18,13 @@ lên dịch vụ bên ngoài.
     (Fig. 3 → Hình 3, Table 2 → Bảng 2, Eq. (1) → Phương trình (1), et al. → và cộng sự).
   - Giữ nguyên mục **Tài liệu tham khảo** (tùy chọn), bỏ qua bảng số liệu, mã nguồn, watermark xoay của arXiv.
   - Tách câu thông minh (không cắt sai ở `et al.`, `e.g.`, `Fig.`…), nối lại từ bị ngắt dòng bằng gạch nối.
-- **3 dạng kết quả**: PDF tiếng Việt, PDF song ngữ (gốc | dịch cạnh nhau), văn bản Markdown.
+- **4 dạng kết quả**: PDF tiếng Việt, PDF song ngữ (gốc | dịch cạnh nhau), **Word (.docx)** để chỉnh sửa tiếp
+  (đúng thứ tự đọc 2 cột, công thức/bảng/hình là ảnh cắt từ bản gốc), văn bản Markdown.
+- **PDF scan**: tự nhận dạng chữ (OCR, Tesseract tích hợp sẵn — dữ liệu tiếng Anh ~4 MB tự tải), dịch và ghi
+  đè lên ảnh.
+- **Nhận diện bố cục bằng mô hình** DocLayout-YOLO (ONNX, CPU): phân biệt đoạn văn / công thức / bảng / hình /
+  đầu-chân trang chính xác hơn; tự quay về luật nếu không có mô hình.
+- **Giữ công thức nguyên bản**: công thức đứng riêng không bị xóa/vẽ lại; công thức nội dòng in nghiêng.
 - **Nhanh trên CPU**: mô hình chạy bằng CTranslate2 int8 (nhanh hơn, ít RAM, không cần torch khi dịch).
 - **Không in ra rác**: câu dịch bị lặp/hỏng được dịch lại từng vế; vẫn hỏng thì giữ tiếng Anh và gắn cờ.
 - **Chấm điểm từng câu & tô vàng đoạn nghi ngờ**: mất số liệu/trích dẫn, sót tiếng Anh, sai thuật ngữ, độ dài
@@ -43,7 +49,18 @@ Mặc định (`auto`) dùng `vinai`. `opus` nhanh hơn nhưng dịch văn bản
 Mô hình Hugging Face chỉ cần tải **một lần** (tự động ở lần dịch đầu tiên hoặc dùng `scripts/download_models.py`),
 sau đó chạy offline hoàn toàn.
 
-## Cài đặt
+## Cài trên Windows (1 click)
+
+1. Tải mã nguồn: nút **Code → Download ZIP** trên GitHub (hoặc file `pdf_translate-windows.zip` ở mục
+   Releases / Actions), giải nén vào một thư mục, ví dụ `C:\pdf_translate`.
+2. Bấm đúp **`windows\install.bat`**. Bộ cài tự: tìm/cài Python 3.12 → tạo môi trường riêng `.venv` →
+   cài thư viện → tải và chuyển mô hình VinAI sang CTranslate2 int8 → tạo shortcut **"Dịch PDF khoa học"**
+   trên Desktop → mở tool trên trình duyệt. Lần đầu cần Internet và mất khoảng 10–20 phút.
+3. Những lần sau: bấm shortcut trên Desktop (hoặc `windows\start.bat`). Cập nhật: `windows\update.bat`.
+
+Nhật ký cài đặt nằm ở `install.log` nếu có lỗi.
+
+## Cài đặt (thủ công / Linux / macOS)
 
 Yêu cầu Python 3.10+.
 
@@ -63,7 +80,7 @@ python scripts/download_models.py vinai opus
 ## Chạy
 
 ```bash
-./run.sh                    # Windows: run.bat  (hoặc: python -m uvicorn app.main:app --port 8000)
+python -m app.launcher      # tự mở trình duyệt; hoặc ./run.sh / run.bat
 ```
 
 Mở <http://localhost:8000>, kéo thả file PDF, chọn mô hình và bấm **Bắt đầu dịch**.
@@ -108,6 +125,9 @@ Rồi chọn engine **LLM cục bộ** trên giao diện. Mọi server có API t
 | `PDFTR_QE_THRESHOLD` | `0.6` | Dưới ngưỡng này đoạn bị coi là nghi ngờ (tô vàng, gửi LLM sửa) |
 | `PDFTR_POSTEDIT_MAX_RATIO` | `0.3` | Tỉ lệ câu tối đa được LLM sửa |
 | `PDFTR_QE_BACKTRANS` | `0` | `1` = chấm điểm thêm bằng dịch ngược Việt→Anh (`PDFTR_BACKTRANS_MODEL`, mặc định opus-mt-vi-en) |
+| `PDFTR_LAYOUT` | `auto` | `auto` = dùng mô hình bố cục DocLayout-YOLO nếu có onnxruntime; `off` = chỉ dùng luật |
+| `PDFTR_LAYOUT_MODEL` | DocStructBench ONNX | `repo_id/file.onnx` trên Hugging Face hoặc đường dẫn file .onnx |
+| `PDFTR_OCR_LANG` / `PDFTR_OCR_DPI` | `eng` / `300` | Ngôn ngữ và độ phân giải OCR cho PDF scan |
 | `PDFTR_LLM_BASE_URL` | `http://localhost:11434/v1` | Địa chỉ LLM tự host |
 | `PDFTR_LLM_MODEL` | `qwen2.5:7b` | Tên mô hình LLM |
 | `PDFTR_VINAI_MODEL` / `PDFTR_OPUS_MODEL` / `PDFTR_NLLB_MODEL` | | Đổi sang mô hình/đường dẫn khác |
@@ -147,12 +167,12 @@ Lệnh này kiểm tra thư viện, GPU, mô hình đã tải và thử dịch m
 | Dịch rất chậm | Máy chỉ có CPU: đặt `PDFTR_NUM_BEAMS=2` (nhanh gấp ~2 lần, chất lượng giảm nhẹ), hoặc dịch theo khoảng trang |
 | `Lỗi khi nạp torch: ... DLL` (Windows) | Cài [Microsoft Visual C++ Redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe) rồi chạy lại |
 | File kết quả vẫn tiếng Anh / `Không tìm thấy đoạn văn nào cần dịch` | Chạy `python -m app.inspect file.pdf` để xem tool phân loại từng khối chữ, gửi kết quả để được hỗ trợ |
-| `PDF gần như không có lớp chữ` | PDF dạng ảnh scan — cần OCR trước (`ocrmypdf`) |
+| `Trang ... là ảnh scan, cần OCR nhưng: ...` | Không tải được dữ liệu OCR: tải `eng.traineddata` (tessdata_fast) vào `data/tessdata/` |
 | `./run.sh` không chạy trên Windows | Dùng `run.bat` |
 
 ## Giới hạn
 
-- PDF dạng ảnh scan cần OCR trước, ví dụ `ocrmypdf --language eng input.pdf output.pdf`.
+- OCR bản scan hai cột chất lượng thấp có thể nhận sai vài đoạn; bản scan rõ nét một cột cho kết quả tốt nhất.
 - Chữ trong hình ảnh/biểu đồ dạng ảnh không được dịch.
 - Công thức nội dòng được giữ nguyên nhưng hiển thị lại bằng font Unicode nên có thể khác nhẹ so với bản gốc.
 - Dịch máy vẫn có thể sai thuật ngữ chuyên sâu — nên dùng bản song ngữ để đối chiếu.

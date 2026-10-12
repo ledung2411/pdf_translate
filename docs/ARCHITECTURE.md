@@ -40,6 +40,10 @@ PDF ─▶ ① Tiếp nhận ─▶ ② Phân tích bố cục ─▶ ③ DocIR 
 | `app/pipeline.py` | `TextTranslator`: chuẩn hóa, cache, dịch theo lô, kiểm tra & sửa bản dịch hỏng |
 | `app/translators.py` | Engine: `HFSeq2SeqTranslator` (backend ct2 / hf), `LLMTranslator`, cache SQLite |
 | `app/main.py`, `app/jobs.py` | Web API + hàng đợi công việc |
+| `app/layout.py` | Nhận diện bố cục bằng DocLayout-YOLO (ONNX) và hợp nhất với vùng chữ |
+| `app/ocr.py` | Phát hiện trang scan, OCR bằng Tesseract tích hợp trong PyMuPDF |
+| `app/export_docx.py` | Xuất Word theo thứ tự đọc |
+| `app/launcher.py`, `windows/` | Khởi động + mở trình duyệt; bộ cài Windows |
 | `app/doctor.py`, `app/inspect.py` | Chẩn đoán môi trường, xem phân loại khối của một PDF |
 
 ## Lộ trình
@@ -47,5 +51,5 @@ PDF ─▶ ① Tiếp nhận ─▶ ② Phân tích bố cục ─▶ ③ DocIR 
 - [x] **P1** — DocIR; CTranslate2 int8; tự trích thuật ngữ; bộ PDF kiểm thử nhiều nhà xuất bản
 - [x] **P2** — Chấm điểm chất lượng từng câu (luật + tùy chọn dịch ngược chrF) + LLM sửa có chọn lọc câu điểm
   thấp; tô vàng câu nghi ngờ; trang biên tập song ngữ + bộ nhớ dịch (TM)
-- [ ] **P3** — Nhận diện bố cục bằng mô hình (DocLayout-YOLO); giữ công thức dạng vector; OCR; xuất DOCX/HTML;
-  bản cài đặt 1 click cho Windows
+- [x] **P3** — Nhận diện bố cục bằng mô hình (DocLayout-YOLO ONNX); giữ công thức nguyên bản; OCR cho PDF scan;
+  xuất DOCX; bản cài đặt 1 click cho Windows (+ CI kiểm thử trên Windows)
