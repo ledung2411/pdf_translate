@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from app.insight import QUESTIONS, extract_facts, split_sections, summarize, summary_markdown
 from app.ir import Document, Page, Region
-from app.plain import explain_terms, make_plain
+from app.plain import clean_rewrite, explain_terms, make_plain
 
 
 def region(text, y, size=10.0, bold=False, translation=None, kind="text"):
@@ -105,8 +105,69 @@ def test_plain_with_llm_rewrites_sections():
     for r in ir.regions:
         r.translation = r.plain
     md = make_plain(ir, llm=llm)
-    assert llm.calls and "ĐOẠN GỐC (tiếng Anh)" in llm.calls[0][1]
+    assert llm.calls and "<<<" in llm.calls[0][1] and "MỤC:" not in llm.calls[0][1]
     assert "Câu trả lời của LLM" in md
+
+
+def attention_like() -> Document:
+    regs = [
+        region("Attention Is All You Need", 40, 17, True),
+        region("Abstract", 70, 12, True),
+        region("The dominant sequence transduction models are based on complex recurrent networks. We propose the "
+               "Transformer, based solely on attention mechanisms.", 90),
+        region("∗Equal contribution. Jakob proposed replacing RNNs with self-attention and started the effort.",
+               700, 8),
+        region("31st Conference on Neural Information Processing Systems (NIPS 2017), Long Beach, CA, USA.", 760, 8),
+        region("1 Introduction", 130, 12, True),
+        region("Recurrent models preclude parallelization within training examples, which becomes critical at longer "
+               "sequence lengths. Attention mechanisms have become an integral part of sequence models.", 150),
+        region("4 Why Self-Attention", 200, 12, True),
+        region("Self-attention layers connect all positions with a constant number of sequential operations, which "
+               "allows for significantly more parallelization and makes it easier to learn long-range dependencies.",
+               220),
+        region("6 Results", 260, 12, True),
+        region("On the WMT 2014 English-to-German translation task, the big transformer outperforms the best "
+               "previously reported models including GNMT and ConvS2S by more than 2.0 BLEU, training on 8 P100 GPUs "
+               "for EN-DE.", 280),
+        region("7 Conclusion", 320, 12, True),
+        region("The code we used to train and evaluate our models is available at https://github.com/ "
+               "tensorflow/tensor2tensor.", 340),
+    ]
+    return Document(source="attention.pdf", pages=[Page(index=0, number=1, width=600, height=800, regions=regs)])
+
+
+def test_footnotes_rationale_urls_and_baselines():
+    ir = attention_like()
+    secs = split_sections(ir)
+    text = " ".join(r.plain for s in secs for r in s.regions)
+    assert "Equal contribution" not in text and "NIPS 2017" not in text  # chú thích chân trang bị loại
+    assert {s.title: s.kind for s in secs}["4 Why Self-Attention"] == "rationale"
+    by_key = {a.question.key: a for a in summarize(ir, llm=None).answers}
+    assert "allows for significantly more parallelization" in by_key["why"].text
+    facts = extract_facts(ir, secs)
+    assert facts["code"] == ["https://github.com/tensorflow/tensor2tensor"]
+    assert {"GNMT", "ConvS2S"} <= set(facts["baselines"])
+    assert not {"BLEU", "GPUs", "P100", "EN-DE"} & set(facts["baselines"])
+
+
+class RefusingLLM(FakeLLM):
+    def _chat(self, system, user):
+        self.calls.append((system, user))
+        return "Bài báo không nêu rõ." if "Lưu ý:" not in user else "- Có trả lời"
+
+
+def test_refusal_is_retried_once():
+    llm = RefusingLLM()
+    s = summarize(paper(), llm=llm)
+    retried = [u for _, u in llm.calls if "Lưu ý:" in u]
+    assert retried and len(llm.calls) == len(QUESTIONS) + len(retried)
+    assert any(a.text.startswith("- Có trả lời") for a in s.answers)
+
+
+def test_clean_rewrite_strips_leaked_labels():
+    out = clean_rewrite("MỤC: Tóm tắt\n\nĐOẠN GỐC (tiếng Anh):\nMô hình mới đơn giản hơn.\n\n"
+                        "BẢN DỊCH MÁY (để tham khảo):\n<<<\nNó nhanh hơn.\n>>>")
+    assert out == "Mô hình mới đơn giản hơn.\n\nNó nhanh hơn."
 
 
 def test_api_extras_for_finished_job(tmp_path):

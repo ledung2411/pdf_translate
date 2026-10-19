@@ -32,6 +32,8 @@ StatusFn = Callable[[str], None]
 # Thứ tự quan trọng: "Comparison to State-of-the-Art Methods" là thí nghiệm, không phải phương pháp.
 _SECTION_KINDS = [
     ("abstract", r"abstract|summary"),
+    # "Why Self-Attention", "Rationale", "Design choices": lập luận vì sao chọn giải pháp
+    ("rationale", r"\bwhy\b|rationale|justification|intuition|motivation for|design choices?"),
     ("intro", r"introduction|background|motivation|overview"),
     ("related", r"related work|prior work|literature|previous work|preliminar"),
     ("conclusion", r"conclusion|concluding|summary and"),
@@ -72,6 +74,18 @@ def _is_heading(r: Region, body_size: float) -> bool:
     return r.bold and r.font_size >= body_size * 1.1 and len(text.split()) <= 12
 
 
+_FOOTNOTE_MARK = re.compile(r"^\s*([∗*†‡§¶‖]|\d{1,2}\s*[A-Z]|\d{1,2}\s*https?://)")
+
+
+def _is_footnote(r: Region, body_size: float, page_height: float) -> bool:
+    """Chú thích chân trang (đóng góp tác giả, nơi công tác, tên hội nghị): chữ nhỏ ở cuối trang
+    hoặc mở đầu bằng ký hiệu chú thích. Chú thích hình/bảng không tính."""
+    text = r.plain.strip()
+    if r.kind != "text" or not text or _CAPTION.match(text) or r.font_size >= body_size * 0.9:
+        return False
+    return r.bbox.y0 > page_height * 0.7 or bool(_FOOTNOTE_MARK.match(text))
+
+
 def split_sections(ir: Document) -> list[Section]:
     """Các mục của bài theo thứ tự đọc (dừng ở Tài liệu tham khảo / Lời cảm ơn)."""
     from .export_docx import reading_order
@@ -91,6 +105,8 @@ def split_sections(ir: Document) -> list[Section]:
             if r.kind == "text" and (_STOP_SECTIONS.match(text) or REFERENCES_RE.match(text)) and len(text) < 60:
                 stopped = True
                 break
+            if _is_footnote(r, body, p.height) and sections[-1].kind != "abstract":
+                continue
             if r.kind == "text" and _is_heading(r, body):
                 kind = _section_kind(text)
                 # Trước Tóm tắt / Giới thiệu: tên bài, tên tạp chí... là phần đầu bài.
@@ -176,7 +192,7 @@ QUESTIONS: list[Question] = [
              "Vì sao giải pháp đề xuất phù hợp với bài toán (lập luận, tính chất của dữ liệu/bài toán mà phương pháp khai thác)?",
              r"\b(because|since|therefore|thus|hence|enables?|allows?|ensures?|captur|exploit|leverag|suitable|"
              r"naturally|advantage|benefit|robust|so that|in order to|designed to)\w*",
-             {"method": 1.8, "intro": 1.4, "discussion": 1.4, "experiment": 0.3, "data": 0.3}),
+             {"rationale": 2.6, "method": 1.8, "intro": 1.4, "discussion": 1.4, "experiment": 0.3, "data": 0.3}),
     Question("dataset", "Dữ liệu (dataset)",
              "Bài dùng những bộ dữ liệu nào (tên, quy mô, nguồn, cách chia train/test)? Dữ liệu có công khai không?",
              r"\b(dataset|datasets|data set|benchmark|corpus|database|cohort|subjects|participants|patients|images|"
@@ -201,12 +217,12 @@ QUESTIONS: list[Question] = [
              "Ưu điểm nổi bật của phương pháp là gì?",
              r"\b(advantage|benefit|robust|efficient|effective|accurate|fast|lightweight|scalable|generali[sz]|"
              r"flexible|simple|interpretable|superior|reliab)\w*",
-             {"abstract": 1.4, "discussion": 1.6, "conclusion": 1.6, "experiment": 1.2}),
+             {"abstract": 1.4, "rationale": 1.8, "discussion": 1.6, "conclusion": 1.6, "experiment": 1.2}),
     Question("cons", "Nhược điểm / hạn chế",
              "Phương pháp còn hạn chế/nhược điểm gì (tác giả thừa nhận hoặc thấy rõ từ thí nghiệm)?",
              r"\b(limitation|limitations|limited|fails?|failure|drawback|weakness|cannot|can not|not able|only|"
              r"restricted|requires?|depend|sensitive|expensive|future work|remain|caveat|although)\w*",
-             {"discussion": 2.2, "conclusion": 1.6, "experiment": 1.0}),
+             {"discussion": 2.2, "conclusion": 1.6, "rationale": 1.3, "experiment": 1.0}),
     Question("code", "Mã nguồn công khai",
              "Mã nguồn / mô hình / dữ liệu có được công bố công khai không? Ở đâu?",
              r"(https?://|github|gitlab|code (is|will be)|publicly available|open[- ]source|available at|"
@@ -312,20 +328,39 @@ _METHOD_TOKEN = re.compile(r"(?<![\w-])([A-Z][A-Za-z]*[A-Z0-9][A-Za-z0-9-]*|[A-Z
                            r"[a-z]+[A-Z][A-Za-z0-9-]*)(?![\w])")
 
 
+# Thước đo, phần cứng, cặp ngôn ngữ, đơn vị: hay đứng cạnh tên phương pháp trong câu so sánh nhưng không phải.
+_NOT_METHOD = re.compile(
+    r"^(BLEU|ROUGE(-\w+)?|METEOR|CIDE[Rr]|PSNR|SSIM|LPIPS|FID|FLOPS?|FLOPs|GFLOPs|MACs|AUC|ROC|AUROC|MSE|RMSE|MAE|"
+    r"MAPE|NLL|PPL|WER|CER|mAP|mIoU|IoU|HD\d*|ASSD|Dice|DSC|F1|SOTA|GPUs?|TPUs?|CPUs?|RAM|VRAM|"
+    r"[KPVATH]\d{2,4}|RTX\w*|GTX\w*|NVIDIA|[A-Z]{2}-[A-Z]{2}|WMT\d*|ImageNet\w*|[A-Z][a-z]?\d?)$")
+
+
 def _method_like(tok: str) -> bool:
     """Tên phương pháp: CamelCase / có số / gạch nối (CoSeg, T1w-Reg, ResNet-50) hoặc viết hoa ≥ 4 chữ."""
     if tok in _NOT_NAMES or tok.upper() in ("FIGURE", "TABLE", "SECTION", "EQ") or tok.isdigit() or len(tok) > 25:
+        return False
+    if _NOT_METHOD.match(tok):
         return False
     if tok.isupper():
         return len(tok) >= 4  # bỏ FA, MD, WM, CSF... (thường là đại lượng, không phải phương pháp)
     return True
 
 
+# Link bị xuống dòng trong PDF: "https://github.com/ tensorflow/tensor2tensor" → nối lại.
+_URL_BREAK = re.compile(r"((?:https?://|www\.|github\.com/)[^\s]*[/_-])\s+(?=[a-z0-9][\w.-]*(?:/|[\w-]*[_-][\w-]))")
+
+
+def _join_broken_urls(text: str) -> str:
+    return _URL_BREAK.sub(r"\1", text)
+
+
 def extract_facts(ir: Document, sections: list[Section]) -> dict[str, list[str]]:
-    all_text = " ".join(r.plain for r in ir.regions)
+    all_text = _join_broken_urls(" ".join(r.plain for r in ir.regions))
     urls = []
     for u in _URL_RE.findall(all_text):
         u = u.rstrip(".")
+        if not re.search(r"\.[a-z]{2,}/[\w-]", u, re.I):
+            continue  # chỉ có tên miền ("https://github.com/") → không phải link mã nguồn cụ thể
         if _CODE_HOSTS.search(u) and u not in urls:
             urls.append(u)
     body = " ".join(r.plain for s in sections for r in s.regions if r.kind == "text")
@@ -365,10 +400,20 @@ def extract_facts(ir: Document, sections: list[Section]) -> dict[str, list[str]]
 
 SUMMARY_SYSTEM = """Bạn là nhà khoa học đọc và tóm tắt bài báo nghiên cứu cho đồng nghiệp người Việt.
 Quy tắc:
-- Chỉ dùng thông tin trong TRÍCH ĐOẠN được cung cấp; không bịa. Nếu trích đoạn không đủ để trả lời, viết đúng một dòng: "Bài báo không nêu rõ."
+- Chỉ dùng thông tin trong TRÍCH ĐOẠN được cung cấp; không bịa.
+- Trích đoạn chỉ trả lời được một phần → vẫn trả lời phần đó. Chỉ khi trích đoạn hoàn toàn không liên quan đến câu hỏi mới viết đúng một dòng: "Bài báo không nêu rõ."
 - Trả lời bằng tiếng Việt, súc tích, 2–6 gạch đầu dòng ("- "), có con số cụ thể nếu có.
 - Giữ nguyên tên riêng, tên phương pháp, tên dataset, đường link; công thức viết bằng LaTeX $...$.
 - Không lặp lại câu hỏi, không mở đầu bằng lời dẫn."""
+
+
+RETRY_HINT = ("\n\nLưu ý: các trích đoạn trên được chọn vì có liên quan đến câu hỏi. Hãy trả lời dựa trên chúng, "
+              "kể cả khi chỉ trả lời được một phần (nêu rõ phần nào bài có nói).")
+
+
+def _is_refusal(text: str) -> bool:
+    t = re.sub(r"[\s\-*_.\"“”]+", " ", text).strip().lower()
+    return not t or (len(t) < 80 and "không nêu rõ" in t)
 
 
 def _llm_context(q: Question, ev: list[Evidence], abstract: str, facts: dict[str, list[str]]) -> str:
@@ -405,7 +450,11 @@ def summarize(
         if llm is not None:
             ev = select_evidence(q, sents, 14)
             try:
-                text = llm._chat(SUMMARY_SYSTEM, _llm_context(q, ev, abstract, facts)) if (ev or abstract) else ""
+                prompt = _llm_context(q, ev, abstract, facts)
+                text = llm._chat(SUMMARY_SYSTEM, prompt) if (ev or abstract) else ""
+                if _is_refusal(text) and len(ev) >= 3:
+                    # Mô hình nhỏ hay né trả lời dù trích đoạn có thông tin → hỏi lại một lần, nói rõ hơn.
+                    text = llm._chat(SUMMARY_SYSTEM, prompt + RETRY_HINT) or text
             except Exception as e:  # noqa: BLE001  (LLM lỗi giữa chừng → trích câu cho câu hỏi này)
                 log.warning("LLM lỗi khi tóm tắt '%s': %s", q.title, e)
                 text = ""
