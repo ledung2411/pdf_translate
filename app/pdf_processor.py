@@ -35,6 +35,7 @@ from .scientific import (
     parse_glossary,
 )
 from .layout import apply_layout, get_detector
+from .mathtex import find_math, formula_latex, inline_latex, page_rules
 from .ocr import OcrError, find_tessdata, is_scanned, ocr_textpage
 from .tm import get_tm
 from .translators import TranslatorError, get_engine
@@ -302,6 +303,22 @@ def _split_math_lines(block: dict) -> list[dict]:
     flags = [_is_math_line(ln) for ln in lines]
     if not any(flags) or all(flags):
         return [block]
+    # Dòng công thức sát lề trái của đoạn là phần nối tiếp câu (công thức nội dòng chiếm gần
+    # hết dòng: "∈ R^{d×d_v} and W^O ∈ R^{hd_v×d}."), không phải công thức đứng riêng — công
+    # thức đứng riêng thường được canh giữa/thụt vào hoặc có số thứ tự "(3)".
+    text_x0 = [ln["bbox"][0] for ln, f in zip(lines, flags) if not f]
+    left = min(text_x0)
+    for i, (ln, f) in enumerate(zip(lines, flags)):
+        if not f or i == 0:
+            continue
+        txt = "".join(sp.get("text", "") for sp in ln.get("spans", [])).strip()
+        prev = "".join(sp.get("text", "") for sp in lines[i - 1].get("spans", [])).strip()
+        size = _line_size(ln)
+        if (abs(ln["bbox"][0] - left) < 1.5 * size and not _EQ_NUMBER_RE.search(txt)
+                and not re.search(r"[.:;!?]$", prev) and not flags[i - 1]):
+            flags[i] = False
+    if not any(flags):
+        return [block]
     groups: list[tuple[bool, list[dict]]] = []
     for ln, is_math in zip(lines, flags):
         if groups and groups[-1][0] == is_math:
@@ -323,35 +340,87 @@ def _line_size(line: dict) -> float:
     return max(sizes) if sizes else 10.0
 
 
+def _line_metrics(line: dict) -> tuple[float, float]:
+    """Cỡ chữ thường của dòng và đường chân chữ của nó (để biết ký tự nào là chỉ số)."""
+    weights: dict[float, int] = {}
+    for sp in line.get("spans", []):
+        t = sp.get("text", "").strip()
+        if t and not is_math_font(sp.get("font", "")):
+            weights[round(sp.get("size", 10), 1)] = weights.get(round(sp.get("size", 10), 1), 0) + len(t)
+    if not weights:
+        for sp in line.get("spans", []):
+            t = sp.get("text", "").strip()
+            if t:
+                weights[round(sp.get("size", 10), 1)] = weights.get(round(sp.get("size", 10), 1), 0) + len(t)
+    if not weights:
+        return 10.0, line["bbox"][3]
+    # Cỡ lớn nhất chiếm ≥ 15% ký tự: chỉ số ("Chamfer", "edge") nhiều chữ nhưng nhỏ hơn.
+    total = sum(weights.values())
+    big = [s for s in weights if weights[s] >= 0.15 * total]
+    base = max(big) if big else max(weights, key=lambda s: (weights[s], s))
+    oys = sorted(sp["origin"][1] for sp in line.get("spans", [])
+                 if sp.get("text", "").strip() and abs(sp.get("size", 10) - base) < 0.15)
+    return base, oys[len(oys) // 2] if oys else line["bbox"][3]
+
+
+def _is_math_span(sp: dict, t: str, run: list[dict], line_base: float) -> bool:
+    """Span thuộc công thức: font toán / ký hiệu toán, hoặc chữ nhỏ (chỉ số) dính liền công
+    thức đang đọc — vd. "model" (CMR7) trong d_model."""
+    font = sp.get("font", "")
+    if (is_math_font(font) and not has_prose(t)) or looks_mathy(t):
+        return True
+    if run and sp.get("size", 10) < 0.85 * line_base and not has_prose(t) and len(t.strip()) <= 12:
+        prev = next((x for x in reversed(run) if x.get("text", "").strip()), None)
+        return prev is not None and sp["bbox"][0] - prev["bbox"][2] < 0.5 * line_base
+    return False
+
+
+def _continues_row(last: dict, first: dict) -> bool:
+    """Dòng ``first`` là phần tiếp theo trên cùng hàng của dòng ``last`` (sát ngay bên phải)."""
+    size = _line_size(last)
+    lx0, ly0, lx1, ly1 = last["bbox"]
+    fx0, fy0, fx1, fy1 = first["bbox"]
+    gap = fx0 - lx1
+    same_dir = tuple(last.get("dir", (1, 0))) == tuple(first.get("dir", (1, 0)))
+    # Cùng hàng: chồng nhau theo chiều dọc (ngoặc lớn nhô lên vẫn chạm dòng chữ).
+    same_row = min(ly1, fy1) - max(ly0, fy0) > 0 or abs((ly0 + ly1) / 2 - (fy0 + fy1) / 2) < size * 0.95
+    # Khe âm tới ~1 chữ: chỉ số dưới xếp chồng dưới chỉ số trên (W_i^Q).
+    return same_dir and same_row and -size * 1.0 <= gap <= size * 0.4
+
+
+def _merge_line(last: dict, first: dict) -> dict:
+    return dict(last, spans=last["spans"] + first["spans"], bbox=_union([last["bbox"], first["bbox"]]))
+
+
 def _join_row_pieces(raw_blocks: list[dict]) -> list[dict]:
-    """Ghép các khối MuPDF bị cắt ra giữa một dòng chữ trở lại thành một dòng.
+    """Ghép các khối/dòng MuPDF bị cắt ra giữa một dòng chữ trở lại thành một dòng.
 
     MuPDF hay tách khối ở chỉ số trên ("1000 s/mm" | "², 65 directions") và ở công thức
-    nội dòng có ngoặc lớn ("x_β ⊙ σ" | "(" | "f(x_α)" | ")" | ". Similarly, ..."). Nếu để
-    riêng, mỗi mảnh thành một vùng: mảnh công thức bị giữ nguyên còn phần chữ dịch riêng
-    rồi tràn đè lên nhau. Mảnh nối tiếp phải sát ngay bên phải dòng cuối của khối trước
-    (khe < 0,4 cỡ chữ — nhỏ hơn hẳn khoảng cách giữa hai cột) và cùng hàng ngang.
+    nội dòng có ngoặc lớn ("x_β ⊙ σ" | "(" | "f(x_α)" | ")" | ". Similarly, ..."); trong
+    một khối cũng hay tách dòng ở chỉ số ("W" "Q" | "i ∈ ℝ..."). Nếu để riêng, mỗi mảnh
+    thành một vùng: mảnh công thức bị giữ nguyên còn phần chữ dịch riêng rồi tràn đè lên
+    nhau. Mảnh nối tiếp phải sát ngay bên phải dòng trước (khe < 0,4 cỡ chữ — nhỏ hơn hẳn
+    khoảng cách giữa hai cột) và cùng hàng ngang.
     """
     out: list[dict] = []
     for b in raw_blocks:
+        if b.get("type") == 0 and b.get("lines"):
+            lines: list[dict] = []
+            for ln in b["lines"]:
+                if lines and _continues_row(lines[-1], ln):
+                    lines[-1] = _merge_line(lines[-1], ln)
+                else:
+                    lines.append(ln)
+            b = dict(b, lines=lines)
         prev = out[-1] if out else None
         if (
             prev is not None and b.get("type") == 0 and prev.get("type") == 0
             and b.get("lines") and prev.get("lines")
+            and _continues_row(prev["lines"][-1], b["lines"][0])
         ):
-            last, first = prev["lines"][-1], b["lines"][0]
-            size = _line_size(last)
-            lx0, ly0, lx1, ly1 = last["bbox"]
-            fx0, fy0, fx1, fy1 = first["bbox"]
-            gap = fx0 - lx1
-            same_dir = tuple(last.get("dir", (1, 0))) == tuple(first.get("dir", (1, 0)))
-            # Cùng hàng: chồng nhau theo chiều dọc (ngoặc lớn nhô lên vẫn chạm dòng chữ).
-            same_row = min(ly1, fy1) - max(ly0, fy0) > 0 or abs((ly0 + ly1) / 2 - (fy0 + fy1) / 2) < size * 0.95
-            if same_dir and same_row and -size * 0.6 <= gap <= size * 0.4:
-                merged = dict(last, spans=last["spans"] + first["spans"], bbox=_union([last["bbox"], first["bbox"]]))
-                lines = prev["lines"][:-1] + [merged] + b["lines"][1:]
-                out[-1] = dict(prev, lines=lines, bbox=_union([prev["bbox"], b["bbox"]]))
-                continue
+            lines = prev["lines"][:-1] + [_merge_line(prev["lines"][-1], b["lines"][0])] + b["lines"][1:]
+            out[-1] = dict(prev, lines=lines, bbox=_union([prev["bbox"], b["bbox"]]))
+            continue
         out.append(b)
     return out
 
@@ -360,9 +429,17 @@ def extract_blocks(
     page: pymupdf.Page, page_index: int, textpage: pymupdf.TextPage | None = None
 ) -> list[TextBlock]:
     flags = pymupdf.TEXT_PRESERVE_WHITESPACE | pymupdf.TEXT_MEDIABOX_CLIP
-    data = page.get_text("dict", flags=flags, textpage=textpage)
+    # "rawdict": có vị trí từng ký tự — cần để dựng lại chỉ số trên/dưới của công thức.
+    data = page.get_text("rawdict", flags=flags, textpage=textpage)
+    for blk in data.get("blocks", []):
+        for ln in blk.get("lines", []):
+            for sp in ln.get("spans", []):
+                sp["text"] = "".join(ch["c"] for ch in sp.get("chars", []))
     blocks: list[TextBlock] = []
+    formula_spans: dict[int, list[dict]] = {}  # vùng công thức đứng riêng → các span (để dựng LaTeX)
     for b in _segment_blocks(_join_row_pieces(data.get("blocks", [])), page.rect):
+        math_tex: dict[str, str] = {}
+        math_html: dict[str, str] = {}
         lines_text: list[str] = []
         span_rects: list[pymupdf.Rect] = []
         total = math_chars = mono_chars = 0
@@ -381,10 +458,38 @@ def extract_blocks(
             parts: list[str] = []
             if _has_column_gap(line):
                 table_lines += 1
+            line_base, line_baseline = _line_metrics(line)
+            run: list[dict] = []  # các span của công thức nội dòng đang đọc
+
+            def close_run() -> None:
+                raw = "".join(x.get("text", "") for x in run).strip()
+                if raw and raw not in math_tex:
+                    try:
+                        math_tex[raw], math_html[raw] = inline_latex(run, line_base, line_baseline)
+                    except Exception as e:  # noqa: BLE001  (dựng LaTeX là phụ, không làm hỏng trang)
+                        log.debug("Không dựng được LaTeX cho %r: %s", raw, e)
+                run.clear()
+
+            prev_sp: dict | None = None  # span có chữ gần nhất (để thêm dấu cách ở ranh giới công thức)
             for sp in line.get("spans", []):
                 t = sp.get("text", "")
                 if not t:
                     continue
+                if not t.strip():
+                    if run:
+                        run.append(sp)  # dấu cách giữa hai mẩu công thức
+                else:
+                    cur_math = _is_math_span(sp, t, run, line_base)
+                    # TeX dàn khoảng cách bằng vị trí, không có ký tự dấu cách: "𝑥𝛼is processed"
+                    # → chèn dấu cách ở ranh giới công thức / chữ khi có khe trống.
+                    if prev_sp is not None and cur_math != prev_math and parts \
+                            and not parts[-1].endswith((" ", MATH_END + " ")) and not t[:1].isspace() \
+                            and sp["bbox"][0] - prev_sp["bbox"][2] > 0.12 * line_base \
+                            and not re.match(r"[,.;:)\]]", t.lstrip()):
+                        parts.append(" ")
+                    prev_sp, prev_math = sp, cur_math
+                    if not cur_math:
+                        close_run()
                 # Wiley chèn dấu cách ("dummy-space") sau gạch nối: "Weakly- Supervised".
                 if not t.strip() and parts and parts[-1].rstrip(MATH_END + SUP_END).endswith("-"):
                     continue
@@ -394,10 +499,11 @@ def extract_blocks(
                 if t.strip():
                     span_rects.append(rect)
                 total += n
-                is_math = (is_math_font(font) and not has_prose(t)) or looks_mathy(t)
+                is_math = bool(t.strip()) and _is_math_span(sp, t, run, line_base)
                 is_sup = bool(sp.get("flags", 0) & 1) and t.strip() and not is_math
                 if is_math:
                     math_chars += n
+                    run.append(sp)
                     parts.append(f"{MATH_START}{t}{MATH_END}")
                 elif is_sup:
                     parts.append(f"{SUP_START}{t.strip()}{SUP_END}")
@@ -417,6 +523,7 @@ def extract_blocks(
                         serif_w += n
                     c = sp.get("color", 0)
                     color_w[c] = color_w.get(c, 0) + n
+            close_run()
             line_text = "".join(parts)
             # Gộp các span công thức liền nhau.
             line_text = re.sub(f"{MATH_END}(\\s*){MATH_START}", r"\1", line_text)
@@ -446,6 +553,7 @@ def extract_blocks(
             kind = "math"
         else:
             kind = classify_block(stats)
+        latex = None
         blocks.append(
             TextBlock(
                 page_index=page_index,
@@ -461,9 +569,60 @@ def extract_blocks(
                 span_rects=span_rects,
                 line_rects=line_boxes,
                 math_spans=list(dict.fromkeys(math_pieces)),
+                math_latex={k: v for k, v in math_tex.items() if v},
+                math_html={k: v for k, v in math_html.items() if v},
+                latex=latex,
             )
         )
+        if kind == "math":
+            formula_spans[id(blocks[-1])] = [sp for ln in b.get("lines", []) for sp in ln.get("spans", [])]
+    if formula_spans:
+        blocks = _merge_formula_pieces(blocks, formula_spans, page_rules(page))
     return merge_blocks(blocks)
+
+
+def _merge_formula_pieces(
+    blocks: list[TextBlock], spans_of: dict[int, list[dict]], rules: list[tuple[float, float, float, float]]
+) -> list[TextBlock]:
+    """Gộp các mảnh của cùng một công thức đứng riêng (MuPDF hay cắt "1", "|P|", "∑", "y∈P"
+    thành các khối riêng) rồi dựng LaTeX cho cả công thức."""
+    maths = [b for b in blocks if id(b) in spans_of]
+
+    def touch(a: TextBlock, o: TextBlock) -> bool:
+        pad = max(a.font_size, o.font_size)
+        return (o.bbox + (-1.5 * pad, -1.0 * pad, 1.5 * pad, 1.0 * pad)).intersects(a.bbox)
+
+    groups: list[list[TextBlock]] = [[b] for b in maths]
+    merged = True
+    while merged:  # gộp tới khi không còn hai nhóm nào chạm nhau
+        merged = False
+        for i in range(len(groups)):
+            for j in range(i + 1, len(groups)):
+                if any(touch(a, o) for a in groups[i] for o in groups[j]):
+                    groups[i] += groups.pop(j)
+                    merged = True
+                    break
+            if merged:
+                break
+    out = [b for b in blocks if id(b) not in spans_of]
+    for g in groups:
+        g.sort(key=lambda r: (r.bbox.y0, r.bbox.x0))
+        head = g[0]
+        spans = [sp for r in g for sp in spans_of[id(r)]]
+        for r in g[1:]:
+            head.text = head.text + " " + r.text
+            head.bbox = head.bbox | r.bbox
+            head.span_rects += r.span_rects
+            head.line_rects += r.line_rects
+        box = head.bbox + (-3, -3, 3, 3)
+        try:
+            head.latex = formula_latex(spans, [r for r in rules if box.contains(pymupdf.Rect(r))])
+        except Exception as e:  # noqa: BLE001  (dựng LaTeX là phụ: không được thì giữ ảnh công thức)
+            log.debug("Không dựng được LaTeX cho công thức %r: %s", head.plain[:40], e)
+        out.append(head)
+    # giữ thứ tự gốc của trang
+    order = {id(b): i for i, b in enumerate(blocks)}
+    return sorted(out, key=lambda b: order[id(b)])
 
 
 # Số mục / nhãn chú thích đứng trước một khoảng trống rộng: "3.1.2   Tên mục", "FIGURE 3   Chú thích"
@@ -764,25 +923,18 @@ def get_fontkit() -> FontKit:
 # ---------------------------------------------------------------------------
 
 
-def _to_html(text: str, math_spans: list[str] | None = None) -> str:
-    """Bản dịch → HTML cho insert_htmlbox; công thức nội dòng in nghiêng kiểu LaTeX."""
+def _to_html(text: str, math_spans: list[str] | None = None, math_html: dict[str, str] | None = None) -> str:
+    """Bản dịch → HTML cho insert_htmlbox. Công thức nội dòng vẽ lại có chỉ số trên/dưới
+    (dựng từ PDF gốc); công thức không dựng được thì in nghiêng kiểu LaTeX."""
     text = text.replace(MATH_START, "").replace(MATH_END, "")
-    marks: list[tuple[int, int]] = []
-    for m in sorted(set(math_spans or []), key=len, reverse=True):
-        if len(m) == 1 and not (m.isalpha() or m in "αβγδεθλμσφψω"):
-            continue  # ký hiệu đơn lẻ (=, +) không cần đổi kiểu chữ
-        pat = re.escape(m)
-        if m[:1].isalnum():
-            pat = r"(?<![\w])" + pat
-        if m[-1:].isalnum():
-            pat = pat + r"(?![\w])"
-        for hit in re.finditer(pat, text):
-            if all(hit.end() <= a or hit.start() >= b for a, b in marks):
-                marks.append((hit.start(), hit.end()))
+    math_html = math_html or {}
     out, pos = [], 0
-    for a, b in sorted(marks):
+    for a, b, key in find_math(text, list(math_spans or []) + list(math_html)):
         out.append(html.escape(text[pos:a], quote=False))
-        out.append(f'<span class="m">{html.escape(text[a:b], quote=False)}</span>')
+        if key in math_html:  # đã có sẵn chữ nghiêng / đứng theo bản gốc
+            out.append(f'<span class="mh">{math_html[key]}</span>')
+        else:
+            out.append(f'<span class="m">{html.escape(text[a:b], quote=False)}</span>')
         pos = b
     out.append(html.escape(text[pos:], quote=False))
     s = "".join(out)
@@ -889,13 +1041,16 @@ def render_page(page: pymupdf.Page, blocks: list[TextBlock], fontkit: FontKit, s
             f"font-weight:{'bold' if b.bold else 'normal'};"
             f"font-style:{'italic' if b.italic else 'normal'};"
         )
-        css = fontkit.css + f"\nbody{{margin:0;padding:0;}} .b{{{style}}} sup{{font-size:70%;}} .m{{font-style:italic;}}"
+        css = fontkit.css + (
+            f"\nbody{{margin:0;padding:0;}} .b{{{style}}} sup{{font-size:70%;}} .m{{font-style:italic;}}"
+            " .mh .sup{vertical-align:super;font-size:70%;} .mh .sub{vertical-align:sub;font-size:70%;}"
+        )
         rect = _target_rect(b, blocks, page.rect)
         # Nới nhẹ khung để chữ có dấu tiếng Việt không bị cắt.
         rect.y1 += b.font_size * 0.15
         try:
             page.insert_htmlbox(
-                rect, f'<div class="b">{_to_html(b.translation, b.math_spans)}</div>', css=css,
+                rect, f'<div class="b">{_to_html(b.translation, b.math_spans, b.math_html)}</div>', css=css,
                 archive=fontkit.archive, scale_low=0,
             )
         except Exception as e:  # noqa: BLE001
@@ -947,14 +1102,31 @@ def make_bilingual(
     return out
 
 
+def _latex_inline(text: str, math_latex: dict[str, str]) -> str:
+    """Thay các công thức nội dòng trong bản dịch bằng LaTeX ``$...$``."""
+    text = text.replace(MATH_START, "").replace(MATH_END, "")
+    if not math_latex:
+        return text
+    out, pos = [], 0
+    for a, b, key in find_math(text, list(math_latex)):
+        out.append(text[pos:a])
+        out.append(f"${math_latex[key]}$")
+        pos = b
+    out.append(text[pos:])
+    return "".join(out)
+
+
 def blocks_to_markdown(pages: list[list[TextBlock]], page_numbers: list[int]) -> str:
     out: list[str] = []
     for num, blocks in zip(page_numbers, pages):
         out.append(f"\n\n## Trang {num}\n")
         for b in blocks:
             if b.translation is not None:
-                text = b.translation.replace(SUP_START, "^").replace(SUP_END, "")
+                text = _latex_inline(b.translation, b.math_latex)
+                text = text.replace(SUP_START, "^").replace(SUP_END, "")
                 out.append(f"**{text}**" if b.bold and len(text) < 150 else text)
+            elif b.kind == "math" and b.latex:
+                out.append(f"$$\n{b.latex}\n$$")
             elif b.kind in ("math", "code", "reference", "data", "table"):
                 out.append(f"`{b.plain}`" if len(b.plain) < 200 else b.plain)
     return "\n\n".join(out).strip() + "\n"

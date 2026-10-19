@@ -43,6 +43,9 @@ class Region:
     score: float | None = None  # điểm chất lượng bản dịch 0..1 (thấp nhất trong các câu của vùng)
     notes: list[str] = field(default_factory=list)  # lý do bị trừ điểm
     math_spans: list[str] = field(default_factory=list)  # công thức nội dòng (để in nghiêng khi dựng)
+    math_latex: dict[str, str] = field(default_factory=dict)  # công thức nội dòng → LaTeX (Word, Markdown)
+    math_html: dict[str, str] = field(default_factory=dict)  # công thức nội dòng → HTML có sub/sup (PDF)
+    latex: str | None = None  # vùng công thức đứng riêng → LaTeX
 
     @property
     def plain(self) -> str:

@@ -43,7 +43,16 @@ jobs:
           wc -l eng.devtest vie.devtest
           curl -sSL -o attention.pdf https://arxiv.org/pdf/1706.03762v7
 
-      - name: Tải mô hình và chuyển sang CTranslate2 int8 (không tính giờ)
+      - name: Công thức → LaTeX và chồng lấn trên attention.pdf
+        env:
+          PDFTR_ENABLE_MOCK: "1"
+        run: |
+          for pg in 3 4 5; do python -m app.inspect attention.pdf --page $pg --math; done | tee math.log
+          python -m app.cli attention.pdf -e mock -o mathout --no-bilingual 2>&1 | tee -a math.log
+          echo "Số cảnh báo chồng lấn khi dịch: $(grep -c 'chồng lên' math.log || true)"
+          grep -o '\$[^$]\{4,120\}\$' mathout/attention_vi.md | head -40
+
+
         run: python scripts/convert_ct2.py vinai
 
       - name: So các cách áp thuật ngữ (tắt / codeswitch / token)
@@ -82,3 +91,7 @@ jobs:
             benchmark.json
             benchmark.hyp.txt
             terms.json
+            math.log
+            mathout/attention_vi.md
+            mathout/attention_vi.docx
+            mathout/attention_vi.pdf

@@ -30,6 +30,15 @@ def test_math_font_line_split():
     assert len(_split_math_lines(block)) == 2
 
 
+def test_math_line_continuing_sentence_stays_in_paragraph():
+    # attention.pdf trang 5: dòng thứ hai gần như toàn công thức nhưng là phần cuối câu
+    block = {"type": 0, "bbox": (72, 100, 300, 140), "lines": [
+        _line(100, "Where the projections are parameter matrices W and"),
+        _line(114, "∈ R dmodel × dv and W O ∈ R hdv × dmodel .", font="CMMI10"),
+    ]}
+    assert len(_split_math_lines(block)) == 1
+
+
 def test_inline_math_rendered_italic():
     html = _to_html("Cho x ∈ ℝd là đầu vào, với ma trận W và hệ số α.", ["x ∈ ℝd", "W", "α", "="])
     assert '<span class="m">x ∈ ℝd</span>' in html
