@@ -147,3 +147,8 @@ th { position: sticky; top: 0; background: var(--card); }
 .btn.small { padding: 5px 10px; font-size: 13px; }
 .savebar { position: sticky; bottom: 0; background: var(--card); border-top: 1px solid var(--border); padding: 10px 0; margin-top: 16px; }
 .savebar .row { flex-wrap: wrap; }
+
+.extras { display: grid; gap: 10px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+.extra { display: grid; gap: 4px; }
+.extra .row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
+.small { font-size: .86em; }

@@ -20,12 +20,14 @@ from .jobs import manager
 from .ir import Document
 from .jobs import quality_summary
 from .pdf_processor import (
+    EXTRA_SUFFIXES,
     IR_FILENAME,
     PdfError,
     TranslateOptions,
     analyze_pdf,
     build_glossary,
     is_doubtful,
+    local_llm,
     render_outputs,
 )
 from .pipeline import MATH_END, MATH_START, SUP_END, SUP_START
@@ -46,6 +48,13 @@ DOWNLOAD_NAMES = {
     "markdown": ("text/markdown; charset=utf-8", "_vi.md"),
     "docx": ("application/vnd.openxmlformats-officedocument.wordprocessingml.document", "_vi.docx"),
 }
+for _kind, _suffix in EXTRA_SUFFIXES.items():
+    DOWNLOAD_NAMES[_kind] = (
+        "text/html; charset=utf-8" if _suffix.endswith(".html") else
+        "text/markdown; charset=utf-8" if _suffix.endswith(".md") else
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        _suffix,
+    )
 
 
 
@@ -86,6 +95,8 @@ async def create_job(
     post_edit: bool = Form(True),
     highlight_doubtful: bool = Form(True),
     ocr: bool = Form(True),
+    summary: bool = Form(False),
+    plain: bool = Form(False),
 ) -> dict:
     engine = engine or default_engine_key()
     try:
@@ -108,9 +119,38 @@ async def create_job(
         post_edit=post_edit,
         highlight_doubtful=highlight_doubtful,
         ocr=ocr,
+        summary=summary,
+        plain=plain,
     )
     job = manager.submit(file.filename or "document.pdf", data, opts)
     return job.public()
+
+
+class ExtrasRequest(BaseModel):
+    summary: bool = True
+    plain: bool = False
+
+
+@app.post("/api/jobs/{job_id}/extras")
+def create_extras(job_id: str, req: ExtrasRequest) -> dict:
+    """Tạo thêm tóm tắt bài báo / bản dễ hiểu cho bài đã dịch."""
+    job = manager.get(job_id)
+    if job is None:
+        raise HTTPException(404, "Không tìm thấy công việc.")
+    if job.status in ("queued", "running"):
+        raise HTTPException(409, "Công việc đang chạy, hãy đợi xong.")
+    if not (job.dir / IR_FILENAME).exists():
+        raise HTTPException(400, "Bài này chưa dịch xong.")
+    if not (req.summary or req.plain):
+        raise HTTPException(400, "Chọn ít nhất một loại.")
+    return manager.submit_extras(job, req.summary, req.plain).public()
+
+
+@app.get("/api/llm")
+def llm_status() -> dict:
+    """LLM cục bộ có đang chạy không (để giao diện báo chế độ tóm tắt)."""
+    llm = local_llm()
+    return {"available": llm is not None, "model": settings.llm_model, "base_url": settings.llm_base_url}
 
 
 @app.post("/api/terms")

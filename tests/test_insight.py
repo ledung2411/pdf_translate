@@ -1,0 +1,140 @@
+"""Tóm tắt theo câu hỏi nghiên cứu và bản dễ hiểu (LLM giả lập + chế độ không LLM)."""
+
+import time
+
+import pymupdf
+from fastapi.testclient import TestClient
+
+from app.insight import QUESTIONS, extract_facts, split_sections, summarize, summary_markdown
+from app.ir import Document, Page, Region
+from app.plain import explain_terms, make_plain
+
+
+def region(text, y, size=10.0, bold=False, translation=None, kind="text"):
+    return Region(page_index=0, bbox=pymupdf.Rect(50, y, 550, y + 12), text=text, kind=kind, font_size=size,
+                  bold=bold, italic=False, serif=True, color=0, align="justify",
+                  line_rects=[pymupdf.Rect(50, y, 550, y + 12)], translation=translation)
+
+
+def paper() -> Document:
+    regs = [
+        region("FastSeg: Efficient Brain Segmentation With Lightweight Networks", 40, 16, True),
+        region("Abstract. Manual segmentation is time-consuming and expensive. We propose FastSeg, a lightweight "
+               "network for brain segmentation. FastSeg improves Dice by 3.2% over nnU-Net while running 5× faster.", 70),
+        region("1 Introduction", 100, 11, True),
+        region("Brain segmentation is critical for clinical diagnosis. However, existing methods are slow and "
+               "require large GPUs. Our contributions are threefold: we propose a novel encoder with depthwise "
+               "convolutions, inspired by MobileNet, and we release our code at https://github.com/lab/fastseg.", 120),
+        region("2 Method", 150, 11, True),
+        region("The network takes a 3D MRI volume as input and outputs a label map with 4 classes. The encoder "
+               "consists of five blocks; because depthwise convolutions reduce parameters, the model fits on a CPU.", 170),
+        region("3 Experiments", 200, 11, True),
+        region("We evaluate on the BraTS dataset and the OASIS dataset with Dice and HD95 metrics. We compare "
+               "against nnU-Net, SwinUNETR and TransUNet baselines.", 220),
+        region("4 Discussion", 250, 11, True),
+        region("A limitation is that FastSeg was only tested on adult brains; future work will extend it to infants.", 270),
+        region("References", 300, 11, True),
+        region("[1] O. Ronneberger. U-Net. 2015.", 320),
+    ]
+    return Document(source="fastseg.pdf", pages=[Page(index=0, number=1, width=600, height=800, regions=regs)])
+
+
+class FakeLLM:
+    def __init__(self):
+        self.calls = []
+
+    def _chat(self, system, user):
+        self.calls.append((system, user))
+        return "- Câu trả lời của LLM"
+
+
+def test_sections_and_facts():
+    ir = paper()
+    secs = split_sections(ir)
+    kinds = [s.kind for s in secs]
+    assert "intro" in kinds and "method" in kinds and "experiment" in kinds and "discussion" in kinds
+    assert not any("Ronneberger" in r.plain for s in secs for r in s.regions)  # dừng ở References
+    facts = extract_facts(ir, secs)
+    assert facts["code"] == ["https://github.com/lab/fastseg"]
+    assert "BraTS" in facts["datasets"] and "OASIS" in facts["datasets"]
+    assert {"nnU-Net", "SwinUNETR", "TransUNet"} <= set(facts["baselines"])
+
+
+def test_summary_without_llm_picks_evidence():
+    s = summarize(paper(), llm=None, translate=lambda xs: [f"VI: {x}" for x in xs])
+    by_key = {a.question.key: a for a in s.answers}
+    assert len(s.answers) == len(QUESTIONS) and s.mode == "extract"
+    assert "we propose" in by_key["contribution"].text.lower()
+    assert "inspired by MobileNet" in by_key["origin"].text
+    assert "takes a 3D MRI volume" in by_key["io"].text
+    assert "limitation" in by_key["cons"].text.lower()
+    assert "https://github.com/lab/fastseg" in by_key["code"].text
+    assert by_key["contribution"].text.startswith("- VI:")  # câu trích được dịch
+    md = summary_markdown(s)
+    assert md.startswith("# Tóm tắt bài báo") and "## Đóng góp chính" in md
+
+
+def test_summary_with_llm_uses_grounded_context():
+    llm = FakeLLM()
+    s = summarize(paper(), llm=llm)
+    assert s.mode == "llm" and len(llm.calls) == len(QUESTIONS)
+    system, user = llm.calls[0]
+    assert "không bịa" in system and "Bài báo không nêu rõ" in system
+    assert "TRÍCH ĐOẠN LIÊN QUAN" in user and "CÂU HỎI:" in user and "Abstract" in user
+    code_prompt = next(u for _, u in llm.calls if "Mã nguồn" in u or "công bố công khai" in u)
+    assert "github.com/lab/fastseg" in code_prompt
+    assert all(a.text.startswith("- Câu trả lời của LLM") for a in s.answers)
+
+
+def test_plain_without_llm_explains_terms_once():
+    used: set[str] = set()
+    text, added = explain_terms("Mô hình học sâu tối ưu hàm mất mát; học sâu rất mạnh.", used)
+    assert text.count("học sâu (*") == 1 and "hàm mất mát (*" in text
+    assert {t.lower() for t, _ in added} == {"học sâu", "hàm mất mát"}
+    ir = paper()
+    for r in ir.regions:
+        r.translation = "Chúng tôi dùng học sâu và tập dữ liệu BraTS." if r.kind == "text" and len(r.plain) > 60 else r.plain
+    md = make_plain(ir)
+    assert "## Khái niệm cần biết" in md and "**học sâu**" in md
+    assert "FastSeg: Efficient" not in md.split("## Khái niệm cần biết")[1].split("##")[0]
+
+
+def test_plain_with_llm_rewrites_sections():
+    llm = FakeLLM()
+    ir = paper()
+    for r in ir.regions:
+        r.translation = r.plain
+    md = make_plain(ir, llm=llm)
+    assert llm.calls and "ĐOẠN GỐC (tiếng Anh)" in llm.calls[0][1]
+    assert "Câu trả lời của LLM" in md
+
+
+def test_api_extras_for_finished_job(tmp_path):
+    from app.main import app
+
+    from .make_sample_pdf import make
+
+    pdf = tmp_path / "s.pdf"
+    make(str(pdf))
+    with TestClient(app) as client:
+        r = client.post("/api/jobs", files={"file": ("paper.pdf", pdf.read_bytes(), "application/pdf")},
+                        data={"engine": "mock", "make_bilingual": "false"})
+        job_id = r.json()["id"]
+
+        def wait():
+            for _ in range(200):
+                st = client.get(f"/api/jobs/{job_id}").json()
+                if st["status"] in ("done", "error"):
+                    return st
+                time.sleep(0.1)
+            return st
+
+        assert wait()["status"] == "done"
+        assert client.get("/api/llm").json()["available"] in (True, False)
+        r = client.post(f"/api/jobs/{job_id}/extras", json={"summary": True, "plain": True})
+        assert r.status_code == 200, r.text
+        st = wait()
+        assert st["status"] == "done", st
+        assert {"summary_html", "summary_docx", "summary_md", "plain_html", "plain_md"} <= set(st["downloads"])
+        page = client.get(f"/api/jobs/{job_id}/download/summary_html?inline=true")
+        assert page.status_code == 200 and "Tóm tắt bài báo" in page.text and "text/html" in page.headers["content-type"]

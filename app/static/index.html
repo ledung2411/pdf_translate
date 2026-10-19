@@ -55,7 +55,12 @@
           <label><input id="highlight" type="checkbox" checked /> Tô vàng đoạn nghi ngờ dịch sai</label>
           <label title="Cần chạy Ollama / llama.cpp / LM Studio trên máy"><input id="post-edit" type="checkbox" checked />
             <span>LLM cục bộ sửa câu dịch kém <small id="llm-state" class="muted"></small></span></label>
+          <label title="Bài toán, tính cấp thiết, đóng góp, dataset, code, kiến trúc, đầu vào–ra, ưu/nhược điểm, baseline, nguồn gốc ý tưởng..."><input id="opt-summary" type="checkbox" />
+            <span>Tóm tắt bài báo theo các câu hỏi nghiên cứu</span></label>
+          <label title="Câu ngắn, giải thích thuật ngữ — cho người không chuyên"><input id="opt-plain" type="checkbox" />
+            <span>Tạo bản dễ hiểu cho người không chuyên</span></label>
         </div>
+        <p id="extras-hint" class="muted small"></p>
 
         <details id="terms-box" class="terms">
           <summary>Thuật ngữ của bài <small class="muted">(tùy chọn — giúp dịch nhất quán)</small></summary>
@@ -93,6 +98,28 @@
           <a id="dl-docx" class="btn" href="#">Tải Word (.docx)</a>
           <a id="dl-markdown" class="btn" href="#">Tải văn bản (.md)</a>
         </div>
+        <div id="extras" class="extras hidden">
+          <div class="extra">
+            <strong>Tóm tắt theo câu hỏi nghiên cứu</strong>
+            <span class="muted small">bài toán · cấp thiết · đóng góp · dataset · code · kiến trúc · đầu vào–ra · ưu/nhược điểm · baseline · cải thiện · nguồn gốc ý tưởng · vì sao phù hợp</span>
+            <div class="row">
+              <a id="dl-summary_html" class="btn small primary" target="_blank" href="#">Xem tóm tắt</a>
+              <a id="dl-summary_docx" class="btn small" href="#">Word</a>
+              <a id="dl-summary_md" class="btn small" href="#">.md</a>
+              <button id="mk-summary" class="btn small" type="button">Tạo tóm tắt</button>
+            </div>
+          </div>
+          <div class="extra">
+            <strong>Bản dễ hiểu cho người không chuyên</strong>
+            <span class="muted small">câu ngắn, giải thích thuật ngữ, giữ nguyên số liệu và công thức</span>
+            <div class="row">
+              <a id="dl-plain_html" class="btn small primary" target="_blank" href="#">Xem bản dễ hiểu</a>
+              <a id="dl-plain_docx" class="btn small" href="#">Word</a>
+              <a id="dl-plain_md" class="btn small" href="#">.md</a>
+              <button id="mk-plain" class="btn small" type="button">Tạo bản dễ hiểu</button>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div id="preview" class="card hidden">
@@ -113,6 +140,9 @@
           <li><b>Bảo vệ công thức &amp; ký hiệu:</b> công thức (font toán LaTeX), ký hiệu Hy Lạp, biểu thức như <code>p &lt; 0.05</code>, trích dẫn <code>[12]</code>, URL, DOI, mã nguồn… không bị dịch sai.</li>
           <li><b>Thuật ngữ nhất quán:</b> gần 200 thuật ngữ chuyên ngành (Toán, Thống kê, AI, Vật lý, Y sinh…), có thể bổ sung thuật ngữ riêng.</li>
           <li><b>Tiêu đề mục chuẩn:</b> Abstract → Tóm tắt, Introduction → Giới thiệu, Figure → Hình…</li>
+          <li><b>Tóm tắt & bản dễ hiểu:</b> trả lời các câu hỏi quan trọng của một bài nghiên cứu và viết lại cho người
+            không chuyên. Tốt nhất khi có LLM cục bộ (Ollama: <code>ollama pull qwen2.5:7b</code>); không có thì tool trích
+            các câu liên quan trong bài và giải thích thuật ngữ.</li>
           <li><b>PDF scan:</b> tự nhận dạng chữ (OCR) rồi dịch đè lên ảnh. Kết quả có thêm file <b>Word (.docx)</b> để sửa tiếp.</li>
         </ul>
       </div>

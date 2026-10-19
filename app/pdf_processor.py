@@ -63,6 +63,8 @@ class TranslateOptions:
     use_tm: bool = True  # dùng bản dịch đã duyệt trong bộ nhớ dịch (TM)
     ocr: bool = True  # tự OCR các trang ảnh scan
     layout_model: bool = True  # dùng mô hình nhận diện bố cục nếu có
+    summary: bool = False  # tóm tắt bài báo theo các câu hỏi nghiên cứu
+    plain: bool = False  # bản dễ hiểu cho người không chuyên
 
 
 # Khối văn bản = vùng trong DocIR (giữ tên cũ cho dễ đọc).
@@ -1406,5 +1408,67 @@ def translate_pdf(
     translate_document(ir, opts, report)
     ir.save(out_dir / IR_FILENAME)
     outputs = render_outputs(ir, input_path, out_dir, opts.make_bilingual, report, opts.highlight_doubtful)
+    if opts.summary or opts.plain:
+        outputs.update(make_extras(ir, out_dir, opts, opts.summary, opts.plain, report))
     report(1.0, "Hoàn tất")
     return outputs
+
+
+# Tệp kết quả của tóm tắt / bản dễ hiểu: loại → hậu tố tên file
+EXTRA_SUFFIXES = {
+    "summary_html": "_tom_tat.html", "summary_md": "_tom_tat.md", "summary_docx": "_tom_tat.docx",
+    "plain_html": "_de_hieu.html", "plain_md": "_de_hieu.md", "plain_docx": "_de_hieu.docx",
+}
+
+
+def local_llm():
+    """LLM cục bộ đang chạy (Ollama / LM Studio...) hoặc None."""
+    try:
+        llm = get_engine("llm")
+    except TranslatorError:
+        return None
+    ok, _ = llm.available()
+    return llm if ok else None
+
+
+def make_extras(
+    ir: Document, out_dir: Path, opts: TranslateOptions, summary: bool = True, plain: bool = True,
+    progress: ProgressFn | None = None,
+) -> dict[str, Path]:
+    """Tạo bản tóm tắt theo câu hỏi nghiên cứu và/hoặc bản dễ hiểu (Markdown, Word, HTML)."""
+    from .insight import markdown_to_html, summarize, summary_markdown, write_docx
+    from .plain import make_plain
+
+    def status(msg: str) -> None:
+        if progress:
+            progress(0.97, msg)
+
+    stem = re.sub(r"[^\w\-]+", "_", Path(ir.source).stem)[:80] or "document"
+    llm = local_llm()
+    status("Đang chuẩn bị tóm tắt..." if llm is None else f"Dùng LLM cục bộ {settings.llm_model}...")
+    out: dict[str, Path] = {}
+
+    def save(kind: str, md: str, title: str) -> None:
+        files = {f"{kind}_md": out_dir / f"{stem}{EXTRA_SUFFIXES[kind + '_md']}",
+                 f"{kind}_html": out_dir / f"{stem}{EXTRA_SUFFIXES[kind + '_html']}",
+                 f"{kind}_docx": out_dir / f"{stem}{EXTRA_SUFFIXES[kind + '_docx']}"}
+        files[f"{kind}_md"].write_text(md, encoding="utf-8")
+        files[f"{kind}_html"].write_text(markdown_to_html(md, title), encoding="utf-8")
+        write_docx(md, files[f"{kind}_docx"], title)
+        out.update(files)
+
+    if summary:
+        translate = None
+        if llm is None:
+            try:
+                engine = get_engine(opts.engine)
+                if engine.available()[0] and engine.key != "llm":
+                    tr = TextTranslator(engine, build_glossary(opts))
+                    translate = tr.translate_texts
+            except TranslatorError as e:
+                log.info("Không dịch được câu trích dẫn cho tóm tắt: %s", e)
+        s = summarize(ir, llm, translate, status)
+        save("summary", summary_markdown(s), f"Tóm tắt — {s.title}")
+    if plain:
+        save("plain", make_plain(ir, llm, status), "Bản dễ hiểu")
+    return out

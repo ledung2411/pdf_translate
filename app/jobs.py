@@ -16,7 +16,9 @@ from pathlib import Path
 
 from .config import settings
 from .ir import Document
-from .pdf_processor import IR_FILENAME, PdfError, TranslateOptions, is_doubtful, translate_pdf
+from .pdf_processor import (
+    EXTRA_SUFFIXES, IR_FILENAME, PdfError, TranslateOptions, is_doubtful, make_extras, translate_pdf,
+)
 from .translators import TranslatorError
 
 log = logging.getLogger(__name__)
@@ -74,7 +76,7 @@ def quality_summary(ir_path: Path) -> dict:
 class JobManager:
     def __init__(self) -> None:
         self.jobs: dict[str, Job] = {}
-        self._q: queue.Queue[str] = queue.Queue()
+        self._q: queue.Queue[tuple[str, str, dict]] = queue.Queue()  # (việc, job_id, tham số)
         self._lock = threading.Lock()
         self._worker: threading.Thread | None = None
 
@@ -92,7 +94,15 @@ class JobManager:
         (job.dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
         with self._lock:
             self.jobs[job.id] = job
-        self._q.put(job.id)
+        self._q.put(("translate", job.id, {}))
+        self.start()
+        return job
+
+    def submit_extras(self, job: Job, summary: bool, plain: bool) -> Job:
+        """Tạo thêm tóm tắt / bản dễ hiểu cho bài đã dịch xong (chạy trong hàng đợi chung)."""
+        job.status, job.progress, job.error = "queued", 0.95, None
+        job.message = "Đang chờ tạo tóm tắt / bản dễ hiểu..."
+        self._q.put(("extras", job.id, {"summary": summary, "plain": plain}))
         self.start()
         return job
 
@@ -116,7 +126,9 @@ class JobManager:
         job = Job(id=job_id, filename=meta.get("filename", "document.pdf"), options=opts,
                   status="done", progress=1.0, message="Hoàn tất", created=meta.get("created", time.time()))
         stem = re.sub(r"[^\w\-]+", "_", Path("input.pdf").stem)
-        for kind, suffix in (("translated", "_vi.pdf"), ("bilingual", "_song_ngu.pdf"), ("markdown", "_vi.md"), ("docx", "_vi.docx")):
+        kinds = {"translated": "_vi.pdf", "bilingual": "_song_ngu.pdf", "markdown": "_vi.md", "docx": "_vi.docx",
+                 **EXTRA_SUFFIXES}
+        for kind, suffix in kinds.items():
             f = d / f"{stem}{suffix}"
             if f.exists():
                 job.outputs[kind] = str(f)
@@ -132,17 +144,26 @@ class JobManager:
 
     def _run(self) -> None:
         while True:
-            job_id = self._q.get()
+            task, job_id, params = self._q.get()
             job = self.jobs.get(job_id)
             if job is None:
                 continue
-            job.status, job.started = "running", time.time()
+            job.status = "running"
+            if task == "translate":
+                job.started = time.time()
             job.message = "Đang chuẩn bị..."
 
             def progress(frac: float, msg: str, job: Job = job) -> None:
                 job.progress, job.message = round(frac, 4), msg
 
             try:
+                if task == "extras":
+                    ir = Document.load(job.dir / IR_FILENAME)
+                    extra = make_extras(ir, job.dir, job.options, params.get("summary", True),
+                                        params.get("plain", True), progress)
+                    job.outputs.update({k: str(v) for k, v in extra.items()})
+                    job.status, job.progress, job.message = "done", 1.0, "Hoàn tất"
+                    continue
                 outputs = translate_pdf(job.input_path, job.dir, job.options, progress)
                 job.outputs = {k: str(v) for k, v in outputs.items()}
                 job.summary = quality_summary(job.dir / IR_FILENAME)

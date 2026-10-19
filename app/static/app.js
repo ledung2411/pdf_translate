@@ -185,6 +185,8 @@ $("#pdf-form").addEventListener("submit", async (e) => {
   fd.append("make_bilingual", $("#bilingual").checked);
   fd.append("highlight_doubtful", $("#highlight").checked);
   fd.append("post_edit", $("#post-edit").checked);
+  fd.append("summary", $("#opt-summary").checked);
+  fd.append("plain", $("#opt-plain").checked);
   fd.append("custom_glossary", $("#custom-gloss").value + "\n" + termGlossaryLines().join("\n"));
 
   $("#submit").disabled = true;
@@ -269,7 +271,52 @@ function showJob(job) {
     $$(".seg-btn").forEach((b) => b.classList.toggle("hidden", !kinds.includes(b.dataset.kind)));
     setPreview(store.get("preview-kind", "translated"), job);
   }
+  // Tóm tắt & bản dễ hiểu: có thì hiện nút xem/tải, chưa có thì nút "Tạo"
+  const ex = $("#extras");
+  const showEx = !!job.id && (done || job.status === "running" || job.status === "queued") && (job.downloads || []).includes("translated");
+  ex.classList.toggle("hidden", !showEx);
+  if (showEx) {
+    const kinds = job.downloads || [];
+    const busy = job.status !== "done";
+    for (const kind of ["summary", "plain"]) {
+      const has = kinds.includes(`${kind}_html`);
+      for (const fmt of ["html", "docx", "md"]) {
+        const a = $(`#dl-${kind}_${fmt}`);
+        a.classList.toggle("hidden", !has);
+        a.href = `api/jobs/${job.id}/download/${kind}_${fmt}` + (fmt === "html" ? "?inline=true" : "");
+      }
+      const b = $(`#mk-${kind}`);
+      b.textContent = has ? "Tạo lại" : (kind === "summary" ? "Tạo tóm tắt" : "Tạo bản dễ hiểu");
+      b.disabled = busy;
+    }
+  }
 }
+
+async function makeExtra(kind) {
+  if (!currentJob) return;
+  const res = await fetch(`api/jobs/${currentJob}/extras`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ summary: kind === "summary", plain: kind === "plain" }),
+  });
+  const data = await res.json();
+  if (!res.ok) { alert(data.detail || "Không tạo được."); return; }
+  showJob(data);
+  poll();
+}
+$("#mk-summary").addEventListener("click", () => makeExtra("summary"));
+$("#mk-plain").addEventListener("click", () => makeExtra("plain"));
+
+async function loadLlmState() {
+  try {
+    const d = await (await fetch("api/llm")).json();
+    $("#extras-hint").textContent = d.available
+      ? `Tóm tắt & bản dễ hiểu sẽ do LLM cục bộ ${d.model} viết.`
+      : `Chưa thấy LLM cục bộ (${d.base_url}): tóm tắt sẽ ở chế độ trích câu từ bài, bản dễ hiểu chỉ kèm giải thích thuật ngữ. ` +
+        `Cài Ollama rồi chạy "ollama pull ${d.model}" để có kết quả tốt hơn.`;
+  } catch { /* bỏ qua */ }
+}
+loadLlmState();
 
 function setPreview(kind, job) {
   const id = (job && job.id) || currentJob;
