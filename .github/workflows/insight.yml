@@ -10,10 +10,14 @@ on:
       - app/plain.py
       - .github/workflows/insight.yml
 
+concurrency:
+  group: insight-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   insight:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 40
     env:
       PYTHONUTF8: "1"
       PDFTR_ENABLE_MOCK: "1"

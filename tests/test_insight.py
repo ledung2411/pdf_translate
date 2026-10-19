@@ -43,7 +43,7 @@ class FakeLLM:
     def __init__(self):
         self.calls = []
 
-    def _chat(self, system, user):
+    def _chat(self, system, user, max_tokens=None):
         self.calls.append((system, user))
         return "- Câu trả lời của LLM"
 
@@ -160,7 +160,7 @@ class RefusingLLM(FakeLLM):
         super().__init__()
         self.stubborn = stubborn
 
-    def _chat(self, system, user):
+    def _chat(self, system, user, max_tokens=None):
         self.calls.append((system, user))
         if system.startswith("Dịch các câu"):
             return "- Câu đã dịch 表 1"
