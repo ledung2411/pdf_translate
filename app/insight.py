@@ -422,9 +422,21 @@ def _evidence_fallback(llm, ev: list[Evidence]) -> str:
         vi = _clean_answer(llm._chat(TRANSLATE_SYSTEM, "\n".join(f"- {e.text}" for e in ev), max_tokens=ANSWER_TOKENS))
     except Exception:  # noqa: BLE001
         vi = ""
-    if not vi or _is_refusal(vi):
+    if not vi or (len(vi) < 80 and "không nêu rõ" in vi.lower()):
         vi = "\n".join(f"- {e.text}" for e in ev)
     return note + vi
+
+
+_CJK = re.compile(r"[\u3000-\u303f\u4e00-\u9fff\uff00-\uffef]+")
+
+
+def strip_cjk(text: str) -> str:
+    """Chữ Hán mà qwen đôi khi chèn vào câu tiếng Việt."""
+    return _CJK.sub("", text.replace("表", "Bảng ").replace("图", "Hình "))
+
+
+def has_cjk_run(text: str, n: int = 4) -> bool:
+    return any(len(m.group(0)) >= n for m in _CJK.finditer(text))
 
 
 ANSWER_TOKENS = 700  # đủ cho 6 gạch đầu dòng; chặn mô hình nhỏ lặp chữ vô tận
@@ -442,8 +454,7 @@ def _clean_answer(text: str) -> str:
         lines.append(line)
     text = "\n".join(lines)
     text = re.sub(r"(?m)^(\s*[-*]\s*)\[[^\]\n]{1,60}\]\s*", r"\1", text or "")
-    text = text.replace("表", "Bảng ").replace("图", "Hình ")
-    text = re.sub(r"[\u3000-\u303f\u4e00-\u9fff\uff00-\uffef]+", "", text)
+    text = strip_cjk(text)
     return re.sub(r"[ \t]{2,}", " ", text).strip()
 
 
@@ -451,9 +462,18 @@ RETRY_HINT = ("\n\nLưu ý: các trích đoạn trên được chọn vì có li
               "kể cả khi chỉ trả lời được một phần (nêu rõ phần nào bài có nói).")
 
 
+_VI_CHARS = re.compile(r"[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]", re.I)
+
+
+def is_mostly_english(text: str) -> bool:
+    """Câu trả lời gần như không có chữ tiếng Việt (mô hình nhỏ chép lại trích đoạn tiếng Anh)."""
+    words = re.findall(r"[^\W\d_]{2,}", re.sub(r"\$[^$]*\$|https?://\S+", " ", text))
+    return len(words) > 8 and sum(bool(_VI_CHARS.search(w)) for w in words) < 0.1 * len(words)
+
+
 def _is_refusal(text: str) -> bool:
     t = re.sub(r"[\s\-*_.\"“”]+", " ", text).strip().lower()
-    return not t or (len(t) < 80 and "không nêu rõ" in t)
+    return not t or (len(t) < 80 and "không nêu rõ" in t) or is_mostly_english(text)
 
 
 def _llm_context(q: Question, ev: list[Evidence], abstract: str, facts: dict[str, list[str]]) -> str:
