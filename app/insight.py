@@ -105,7 +105,7 @@ def split_sections(ir: Document) -> list[Section]:
             if r.kind == "text" and (_STOP_SECTIONS.match(text) or REFERENCES_RE.match(text)) and len(text) < 60:
                 stopped = True
                 break
-            if _is_footnote(r, body, p.height) and sections[-1].kind != "abstract":
+            if _is_footnote(r, body, p.height):
                 continue
             if r.kind == "text" and _is_heading(r, body):
                 kind = _section_kind(text)
@@ -407,6 +407,34 @@ Quy tắc:
 - Không lặp lại câu hỏi, không mở đầu bằng lời dẫn."""
 
 
+RETRY_SYSTEM = SUMMARY_SYSTEM.split("\n- Trích đoạn chỉ")[0] + """
+- Các trích đoạn đã được chọn vì có liên quan đến câu hỏi: hãy tổng hợp câu trả lời từ chúng.
+- Trả lời bằng tiếng Việt, súc tích, 2–6 gạch đầu dòng ("- "), có con số cụ thể nếu có.
+- Giữ nguyên tên riêng, tên phương pháp, tên dataset, đường link; công thức viết bằng LaTeX $...$."""
+
+TRANSLATE_SYSTEM = ("Dịch các câu tiếng Anh sau sang tiếng Việt, mỗi câu một dòng bắt đầu bằng \"- \". Giữ nguyên tên "
+                    "riêng, số liệu, đường link, công thức $...$. Chỉ trả về các dòng đã dịch.")
+
+
+def _evidence_fallback(llm, ev: list[Evidence]) -> str:
+    note = "_Mô hình không tự tổng hợp được câu trả lời; các câu liên quan nhất trong bài:_\n"
+    try:
+        vi = _clean_answer(llm._chat(TRANSLATE_SYSTEM, "\n".join(f"- {e.text}" for e in ev)))
+    except Exception:  # noqa: BLE001
+        vi = ""
+    if not vi or _is_refusal(vi):
+        vi = "\n".join(f"- {e.text}" for e in ev)
+    return note + vi
+
+
+def _clean_answer(text: str) -> str:
+    """Bỏ thẻ mục bị chép từ trích đoạn ("- [1 Introduction] ...") và chữ Hán lẫn vào (qwen)."""
+    text = re.sub(r"(?m)^(\s*[-*]\s*)\[[^\]\n]{1,60}\]\s*", r"\1", text or "")
+    text = text.replace("表", "Bảng ").replace("图", "Hình ")
+    text = re.sub(r"[\u3000-\u303f\u4e00-\u9fff\uff00-\uffef]+", "", text)
+    return re.sub(r"[ \t]{2,}", " ", text).strip()
+
+
 RETRY_HINT = ("\n\nLưu ý: các trích đoạn trên được chọn vì có liên quan đến câu hỏi. Hãy trả lời dựa trên chúng, "
               "kể cả khi chỉ trả lời được một phần (nêu rõ phần nào bài có nói).")
 
@@ -451,10 +479,13 @@ def summarize(
             ev = select_evidence(q, sents, 14)
             try:
                 prompt = _llm_context(q, ev, abstract, facts)
-                text = llm._chat(SUMMARY_SYSTEM, prompt) if (ev or abstract) else ""
+                text = _clean_answer(llm._chat(SUMMARY_SYSTEM, prompt)) if (ev or abstract) else ""
                 if _is_refusal(text) and len(ev) >= 3:
-                    # Mô hình nhỏ hay né trả lời dù trích đoạn có thông tin → hỏi lại một lần, nói rõ hơn.
-                    text = llm._chat(SUMMARY_SYSTEM, prompt + RETRY_HINT) or text
+                    # Mô hình nhỏ hay né trả lời dù trích đoạn có thông tin → hỏi lại một lần, không cho
+                    # lối "không nêu rõ"; vẫn né thì đưa các câu liên quan nhất (nhờ LLM dịch).
+                    text = _clean_answer(llm._chat(RETRY_SYSTEM, prompt + RETRY_HINT)) or text
+                    if _is_refusal(text):
+                        text = _evidence_fallback(llm, ev[:3])
             except Exception as e:  # noqa: BLE001  (LLM lỗi giữa chừng → trích câu cho câu hỏi này)
                 log.warning("LLM lỗi khi tóm tắt '%s': %s", q.title, e)
                 text = ""
