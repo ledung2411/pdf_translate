@@ -46,6 +46,19 @@ jobs:
       - name: Tải mô hình và chuyển sang CTranslate2 int8 (không tính giờ)
         run: python scripts/convert_ct2.py vinai
 
+      - name: Dịch thử tiêu đề và câu khó
+        run: |
+          cat > try.txt <<'TXT'
+          2.2.4 Loss Function Design
+          3.6 Computational Efficiency
+          3.1.2 DMRI Preprocessing and DTI Parameter Computation
+          2.1 Pseudo-Ground-Truth (pGT) Surface Generation
+          IV. Experimental Results
+          We minimize the loss function with stochastic gradient descent.
+          The ABIDE II-NYU dataset includes 52 subjects, acquired on a 3T Siemens Allegra scanner, with acquisition parameters including a b-value of 1000 s/mm², 65 directions, and TR/TE = 5200/78 ms.
+          TXT
+          python scripts/benchmark.py --engine vinai --try try.txt | tee -a "$GITHUB_STEP_SUMMARY"
+
       - name: Đo
         run: |
           python scripts/benchmark.py --engine vinai \

@@ -14,7 +14,7 @@ import pymupdf
 import pytest
 
 from app.ir import Document
-from app.pdf_processor import TranslateOptions, analyze_pdf, translate_pdf
+from app.pdf_processor import TranslateOptions, analyze_pdf, find_overlaps, translate_pdf
 
 from .corpus.docs import ALL
 
@@ -43,6 +43,8 @@ def check_expectations(ir: Document, expect: dict) -> None:
         assert any(s in r.plain for r in ir.regions), f"thiếu {s!r}"
     if "pages" in expect:
         assert len(ir.pages) == expect["pages"]
+    overlaps = [(a.plain[:40], b.plain[:40]) for a, b in find_overlaps(ir.regions)]
+    assert not overlaps, f"vùng chồng lên nhau (bản dịch sẽ đè chữ): {overlaps}"
 
 
 @pytest.mark.parametrize("name", sorted(ALL))
@@ -77,5 +79,4 @@ def test_local_pdfs(pdf):
     ratio = chars["text"] / max(chars["text"] + chars["other"] - refs, 1)
     assert ratio > 0.6, f"chỉ {ratio:.0%} chữ được nhận là đoạn văn ({ir.stats()})"
     expect_file = pdf.with_suffix(".expect.json")
-    if expect_file.exists():
-        check_expectations(ir, json.loads(expect_file.read_text(encoding="utf-8")))
+    check_expectations(ir, json.loads(expect_file.read_text(encoding="utf-8")) if expect_file.exists() else {})

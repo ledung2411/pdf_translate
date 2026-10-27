@@ -110,6 +110,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--n", type=int, default=0, help="chỉ lấy n câu đầu (0 = tất cả)")
     ap.add_argument("--speed-n", type=int, default=100, help="số câu để so tốc độ fp32 và int8 (0 = bỏ qua)")
     ap.add_argument("--pdf", type=Path, action="append", default=[], help="PDF để đo giây/trang")
+    ap.add_argument("--try", dest="try_file", type=Path,
+                    help="dịch thử từng dòng của file qua đúng quy trình của tool rồi in ra (không đo)")
     ap.add_argument("--json", type=Path, default=Path("benchmark.json"))
     args = ap.parse_args(argv)
 
@@ -129,6 +131,17 @@ def main(argv: list[str] | None = None) -> int:
     }
     settings.device = "cpu"
     res["load_ct2_s"] = round(use_backend(eng, "ct2"), 1)  # chuyển đổi int8 nếu chưa có
+
+    if args.try_file:
+        from app.pdf_processor import TranslateOptions, build_glossary
+        from app.pipeline import TextTranslator
+
+        lines = [x for x in read_lines(args.try_file, None) if x]
+        tr = TextTranslator(eng, build_glossary(TranslateOptions(engine=args.engine)), use_cache=False)
+        for en, vi in zip(lines, tr.translate_texts(lines)):
+            print(f"EN: {en}\nVI: {vi}\n", flush=True)
+        if not (args.src or args.pdf):
+            return 0
 
     if args.src and args.ref:
         src, ref = read_lines(args.src, args.n), read_lines(args.ref, args.n)

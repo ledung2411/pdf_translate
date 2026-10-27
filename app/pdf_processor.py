@@ -257,7 +257,13 @@ def _segment_blocks(raw_blocks: list[dict], page_rect: pymupdf.Rect) -> list[dic
             if rest:  # bảng: giữ nguyên để không dịch vỡ bố cục
                 out.append({"type": 0, "bbox": _union([ln["bbox"] for ln in rest]), "lines": rest})
             continue
-        for c in sorted(cols, key=lambda c: c["x"][0]):
+        ordered = sorted(cols, key=lambda c: c["x"][0])
+        if any(_x_overlap(a["x"], b["x"]) > size * 0.5 for a, b in zip(ordered, ordered[1:])):
+            # Các "cột" lấn sang nhau theo chiều ngang → không phải 2 cột thật mà là chữ chạy liền
+            # trên nhiều hàng (vd. danh sách địa chỉ tác giả ngăn bằng "|") → giữ một khối.
+            out.append({**b, "lines": lines})
+            continue
+        for c in ordered:
             group: list[dict] = []
             for ln in c["lines"]:
                 if group:
@@ -312,13 +318,51 @@ def _union(boxes: list) -> tuple[float, float, float, float]:
     )
 
 
+def _line_size(line: dict) -> float:
+    sizes = [sp.get("size", 0) for sp in line.get("spans", []) if sp.get("text", "").strip()]
+    return max(sizes) if sizes else 10.0
+
+
+def _join_row_pieces(raw_blocks: list[dict]) -> list[dict]:
+    """Ghép các khối MuPDF bị cắt ra giữa một dòng chữ trở lại thành một dòng.
+
+    MuPDF hay tách khối ở chỉ số trên ("1000 s/mm" | "², 65 directions") và ở công thức
+    nội dòng có ngoặc lớn ("x_β ⊙ σ" | "(" | "f(x_α)" | ")" | ". Similarly, ..."). Nếu để
+    riêng, mỗi mảnh thành một vùng: mảnh công thức bị giữ nguyên còn phần chữ dịch riêng
+    rồi tràn đè lên nhau. Mảnh nối tiếp phải sát ngay bên phải dòng cuối của khối trước
+    (khe < 0,4 cỡ chữ — nhỏ hơn hẳn khoảng cách giữa hai cột) và cùng hàng ngang.
+    """
+    out: list[dict] = []
+    for b in raw_blocks:
+        prev = out[-1] if out else None
+        if (
+            prev is not None and b.get("type") == 0 and prev.get("type") == 0
+            and b.get("lines") and prev.get("lines")
+        ):
+            last, first = prev["lines"][-1], b["lines"][0]
+            size = _line_size(last)
+            lx0, ly0, lx1, ly1 = last["bbox"]
+            fx0, fy0, fx1, fy1 = first["bbox"]
+            gap = fx0 - lx1
+            same_dir = tuple(last.get("dir", (1, 0))) == tuple(first.get("dir", (1, 0)))
+            # Cùng hàng: chồng nhau theo chiều dọc (ngoặc lớn nhô lên vẫn chạm dòng chữ).
+            same_row = min(ly1, fy1) - max(ly0, fy0) > 0 or abs((ly0 + ly1) / 2 - (fy0 + fy1) / 2) < size * 0.95
+            if same_dir and same_row and -size * 0.6 <= gap <= size * 0.4:
+                merged = dict(last, spans=last["spans"] + first["spans"], bbox=_union([last["bbox"], first["bbox"]]))
+                lines = prev["lines"][:-1] + [merged] + b["lines"][1:]
+                out[-1] = dict(prev, lines=lines, bbox=_union([prev["bbox"], b["bbox"]]))
+                continue
+        out.append(b)
+    return out
+
+
 def extract_blocks(
     page: pymupdf.Page, page_index: int, textpage: pymupdf.TextPage | None = None
 ) -> list[TextBlock]:
     flags = pymupdf.TEXT_PRESERVE_WHITESPACE | pymupdf.TEXT_MEDIABOX_CLIP
     data = page.get_text("dict", flags=flags, textpage=textpage)
     blocks: list[TextBlock] = []
-    for b in _segment_blocks(data.get("blocks", []), page.rect):
+    for b in _segment_blocks(_join_row_pieces(data.get("blocks", [])), page.rect):
         lines_text: list[str] = []
         span_rects: list[pymupdf.Rect] = []
         total = math_chars = mono_chars = 0
@@ -394,7 +438,7 @@ def extract_blocks(
         )
         if rotated:
             kind = "rotated"
-        elif _is_table_like(line_boxes, table_lines, font_size):
+        elif _is_table_like(line_boxes, table_lines, font_size, lines_text):
             kind = "table"
         elif all(_is_math_line(ln) for ln in b.get("lines", []) if "".join(sp.get("text", "") for sp in ln.get("spans", [])).strip()):
             kind = "math"  # dòng công thức đứng riêng (kể cả chữ OCR không có font toán)
@@ -422,17 +466,26 @@ def extract_blocks(
     return merge_blocks(blocks)
 
 
-def _is_table_like(lines: list[pymupdf.Rect], gap_lines: int, size: float) -> bool:
+# Số mục / nhãn chú thích đứng trước một khoảng trống rộng: "3.1.2   Tên mục", "FIGURE 3   Chú thích"
+_SECTION_NUM_RE = re.compile(
+    r"^\s*(\d+(\.\d+)*\.?|[A-Z]\.|[IVX]+\.?|(figure|fig\.|table|algorithm)\s*[A-Z]?\d+[.:]?)\s*$", re.I
+)
+
+
+def _is_table_like(lines: list[pymupdf.Rect], gap_lines: int, size: float, texts: list[str] | None = None) -> bool:
     if gap_lines and gap_lines >= len(lines) / 2:
         return True
     # Nhiều "dòng" nằm cùng hàng ngang, cách xa nhau → các ô của bảng.
-    rows: dict[int, list[pymupdf.Rect]] = {}
-    for r in lines:
-        rows.setdefault(round((r.y0 + r.y1) / 2 / max(size * 0.5, 1)), []).append(r)
+    texts = texts if texts and len(texts) == len(lines) else [""] * len(lines)
+    rows: dict[int, list[tuple[pymupdf.Rect, str]]] = {}
+    for r, t in zip(lines, texts):
+        rows.setdefault(round((r.y0 + r.y1) / 2 / max(size * 0.5, 1)), []).append((r, t))
     multi = 0
     for row in rows.values():
-        row.sort(key=lambda r: r.x0)
-        if any(b.x0 - a.x1 > size * 1.2 for a, b in zip(row, row[1:])):
+        row.sort(key=lambda x: x[0].x0)
+        # Khoảng trống sau số mục ("3.1.2    Tên mục") là tiêu đề, không phải ô bảng.
+        if any(b.x0 - a.x1 > size * 1.2 and not _SECTION_NUM_RE.match(strip_markers(ta))
+               for (a, ta), (b, _) in zip(row, row[1:])):
             multi += 1
     return multi > 0 and multi >= len(rows) / 2
 
@@ -440,13 +493,31 @@ def _is_table_like(lines: list[pymupdf.Rect], gap_lines: int, size: float) -> bo
 _TERMINAL_RE = re.compile(r"[.!?:;]\W*$")
 
 
+def _continues_same_line(a: TextBlock, b: TextBlock) -> bool:
+    """Khối sau là phần còn lại của dòng cuối khối trước (MuPDF tách khối ở chỉ số trên,
+    vd. "1000 s/mm" | "² , 65 directions...") → cùng một đoạn văn."""
+    if not a.line_rects or not b.line_rects or _TERMINAL_RE.search(a.plain):
+        return False
+    last, first = a.line_rects[-1], b.line_rects[0]
+    v_overlap = min(last.y1, first.y1) - max(last.y0, first.y0)
+    return (
+        v_overlap > 0.5 * min(last.height, first.height)
+        and -a.font_size * 0.6 <= first.x0 - last.x1 < a.font_size * 1.5
+        and b.bbox.x0 >= a.bbox.x0 - a.font_size
+        and b.bbox.x1 <= a.bbox.x1 + a.font_size
+    )
+
+
 def _can_merge(a: TextBlock, b: TextBlock) -> bool:
     if a.kind != "text" or b.kind != "text" or a.page_index != b.page_index:
         return False
     if abs(a.font_size - b.font_size) > 0.3 or a.bold != b.bold:
         return False
+    if _continues_same_line(a, b):
+        return True
     gap = b.bbox.y0 - a.bbox.y1
-    if gap < -a.font_size * 0.5 or gap > a.font_size * 0.6:
+    # Cho phép chồng tới ~1 dòng: ngoặc lớn của công thức nội dòng nhô lên trên dòng chữ.
+    if gap < -a.font_size * 0.9 or gap > a.font_size * 0.6:
         return False
     overlap = min(a.bbox.x1, b.bbox.x1) - max(a.bbox.x0, b.bbox.x0)
     if overlap < 0.5 * min(a.bbox.width, b.bbox.width):
@@ -454,6 +525,56 @@ def _can_merge(a: TextBlock, b: TextBlock) -> bool:
     first = b.plain.lstrip()[:1]
     # Nối khi khối sau bắt đầu bằng chữ thường, hoặc khối trước (nhiều dòng) chưa hết câu.
     return first.islower() or (len(a.line_rects) >= 2 and not _TERMINAL_RE.search(a.plain))
+
+
+_NO_OVERLAP_CHECK = {"figure", "rotated", "abandon", "empty"}
+
+
+def find_overlaps(regions: list[TextBlock]) -> list[tuple[TextBlock, TextBlock]]:
+    """Các cặp vùng chồng lên nhau mà ít nhất một vùng sẽ được dịch.
+
+    Bản dịch được viết vào khung của vùng, nên vùng chồng lấn = chữ đè lên nhau trong PDF.
+    Bỏ qua hình (chữ trong hình là chuyện bình thường) và các vùng không đụng tới.
+    """
+    out = []
+    items = [r for r in regions if r.kind not in _NO_OVERLAP_CHECK and r.plain.strip()]
+    for i, a in enumerate(items):
+        for b in items[i + 1:]:
+            if a.page_index != b.page_index or "text" not in (a.kind, b.kind):
+                continue
+            # Chồng nhau gần trọn một dòng chữ và rộng vài chữ → nhìn thấy rõ chữ đè.
+            inter = a.bbox & b.bbox
+            size = min(a.font_size, b.font_size)
+            if not inter.is_empty and inter.height >= 0.8 * size and inter.width >= 2 * size:
+                out.append((a, b))
+    return out
+
+
+def _absorb(a: TextBlock, b: TextBlock) -> None:
+    """Gộp vùng ``b`` vào ``a`` (``a`` đứng trước theo thứ tự đọc)."""
+    a.text = join_lines([a.text, b.text])
+    a.bbox = a.bbox | b.bbox
+    a.span_rects += b.span_rects
+    a.line_rects += b.line_rects
+    a.math_spans = list(dict.fromkeys(a.math_spans + b.math_spans))
+    a.align = _detect_align(a.line_rects, a.bbox)
+
+
+def resolve_overlaps(regions: list[TextBlock]) -> list[TextBlock]:
+    """Gộp các vùng chữ chồng lên nhau (mảnh của cùng một đoạn bị tách sai) để bản dịch
+    không đè lên nhau; chồng lấn với vùng giữ nguyên (công thức, bảng) thì ghi cảnh báo."""
+    while True:
+        pairs = [(a, b) for a, b in find_overlaps(regions) if a.kind == b.kind == "text"]
+        if not pairs:
+            break
+        a, b = pairs[0]
+        first, second = sorted((a, b), key=lambda r: (r.bbox.y0, r.bbox.x0))
+        _absorb(first, second)
+        regions = [r for r in regions if r is not second]
+    for a, b in find_overlaps(regions):
+        log.warning("Trang %d: vùng %s chồng lên vùng %s — bản dịch có thể đè chữ: %r / %r",
+                    a.page_index + 1, a.kind, b.kind, a.plain[:40], b.plain[:40])
+    return regions
 
 
 def merge_blocks(blocks: list[TextBlock]) -> list[TextBlock]:
@@ -742,9 +863,18 @@ def render_page(page: pymupdf.Page, blocks: list[TextBlock], fontkit: FontKit, s
                 if shrink.is_empty:
                     shrink = r
                 page.add_redact_annot(shrink, fill=False, cross_out=False)
+        # Nét vẽ nhỏ cỡ một dòng chữ nằm trọn trong đoạn được dịch (vạch "|" ngăn địa chỉ,
+        # gạch chân, gạch phân số nội dòng): chữ dịch chảy lại nên nét này sẽ lệch chỗ → xóa.
+        # Khung, nền, kẻ bảng, hình vẽ (to hơn hoặc nằm ngoài đoạn) vẫn giữ nguyên.
+        for dr in page.get_drawings():
+            r = pymupdf.Rect(dr["rect"])
+            for b in todo:
+                if r.height <= 1.5 * b.font_size and (b.bbox + (-1, -1, 1, 1)).contains(r):
+                    page.add_redact_annot(r + (-1, -1, 1, 1), fill=False, cross_out=False)
+                    break
         page.apply_redactions(
             images=pymupdf.PDF_REDACT_IMAGE_NONE,
-            graphics=pymupdf.PDF_REDACT_LINE_ART_NONE,
+            graphics=pymupdf.PDF_REDACT_LINE_ART_REMOVE_IF_COVERED,
             text=pymupdf.PDF_REDACT_TEXT_REMOVE,
         )
     # 2) Chèn bản dịch, tự thu nhỏ cỡ chữ nếu bản dịch dài hơn khung.
@@ -915,6 +1045,7 @@ def analyze_pdf(input_path: Path, opts: TranslateOptions, progress: ProgressFn |
                     log.info("Trang %d: mô hình bố cục sửa phân loại %d vùng", num, n_changed)
             except Exception as e:  # noqa: BLE001  (mô hình lỗi → giữ phân loại bằng luật)
                 log.warning("Nhận diện bố cục trang %d lỗi: %s", num, e)
+        regions = resolve_overlaps(regions)
         ir.pages.append(
             Page(index=i, number=num, width=page.rect.width, height=page.rect.height,
                  regions=regions, scanned=scanned)
