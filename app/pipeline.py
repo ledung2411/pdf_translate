@@ -65,6 +65,8 @@ def _match_first_letter(src: str, out: str) -> str:
     return out
 
 
+_MATH_PH_START, _MATH_PH_END = "\ue010", "\ue011"  # chỗ giữ công thức trong lúc tách câu
+_MATH_PH_RE = re.compile(f"{_MATH_PH_START}(\\d+){_MATH_PH_END}")
 _TERM_TOKEN = "ZQX{}"
 _TERM_TOKEN_RE = re.compile(r"ZQX[A-Z]")
 
@@ -170,6 +172,7 @@ class TextTranslator:
         # Mô hình Việt→Anh để chấm điểm bằng dịch ngược (tùy chọn).
         self.back_translator = back_translator
         self.status = status
+        self._math_store: list[str] = []  # công thức nội dòng đang được giữ chỗ
         self._term_src: dict[str, str] = {}  # câu đã thay thuật ngữ → câu gốc
         self._term_tokens: dict[str, dict[str, str]] = {}  # câu đã thay → {mã: tiếng Việt}
         self._builtin_terms = {v.lower() for en in load_builtin_glossary() for v in _variants(en)}
@@ -226,12 +229,24 @@ class TextTranslator:
         thuật ngữ được áp dụng sau khi dịch.
         """
 
+        protect_math = settings.nmt_terms == "token"
+
         def plain(m: re.Match) -> str:
-            return m.group(1) if m.group(1) is not None else _sup_to_plain(m.group(2))
+            if m.group(1) is None:
+                return _sup_to_plain(m.group(2))
+            raw = m.group(1)
+            if not protect_math or not raw.strip():
+                return raw
+            # Công thức đi qua mô hình dưới dạng mã viết tắt (gắn ở _sub_terms) để không bị
+            # dịch/làm hỏng; sau khi dịch đổi lại đúng nguyên văn → tìm được để thay LaTeX.
+            self._math_store.append(raw.strip())
+            lead = " " if raw[:1].isspace() else ""
+            tail = " " if raw[-1:].isspace() else ""
+            return f"{lead}{_MATH_PH_START}{len(self._math_store) - 1}{_MATH_PH_END}{tail}"
 
         t = _MARKED_RE.sub(plain, text)
-        if not re.search(r"[A-Za-z]{2,}", t) or not has_translatable_text(t):
-            unit.result = t
+        if not re.search(r"[A-Za-z]{2,}", self._unmath(t)) or not has_translatable_text(self._unmath(t)):
+            unit.result = self._unmath(t)
             return unit
         # "ABSTRACT Cortical surface..." / "Keywords: a | b" → dịch nhãn riêng.
         m = _LEAD_LABEL_RE.match(t)
@@ -254,8 +269,8 @@ class TextTranslator:
         Chỉ thay thuật ngữ nhiều từ của bảng mặc định và mọi thuật ngữ người dùng tự thêm.
         """
         mode = settings.nmt_terms
-        if mode not in ("codeswitch", "token") or self.glossary is None or self.glossary._re is None:
-            return seg
+        if mode not in ("codeswitch", "token"):
+            return self._unmath(seg)
         builtin = self._builtin_terms
         tokens: dict[str, str] = {}
 
@@ -276,12 +291,29 @@ class TextTranslator:
             tokens[tok] = vi
             return tok
 
-        out = self.glossary._re.sub(rep, seg)
-        if out != seg:
-            self._term_src[out] = seg
+        out = seg
+        if self.glossary is not None and self.glossary._re is not None:
+            out = self.glossary._re.sub(rep, seg)
+
+        def rep_math(m: re.Match) -> str:
+            raw = self._math_store[int(m.group(1))]
+            if len(tokens) >= 26:
+                return raw
+            tok = _TERM_TOKEN.format(chr(65 + len(tokens)))
+            tokens[tok] = raw
+            return tok
+
+        out = _MATH_PH_RE.sub(rep_math, out)
+        original = self._unmath(seg)
+        if out != original:
+            self._term_src[out] = original
             if tokens:
                 self._term_tokens[out] = tokens
         return out
+
+    def _unmath(self, text: str) -> str:
+        """Đổi chỗ giữ công thức về nguyên văn công thức."""
+        return _MATH_PH_RE.sub(lambda m: self._math_store[int(m.group(1))], text)
 
     def _restore_terms(self, seg: str, result: str) -> str | None:
         """Đổi mã thuật ngữ về tiếng Việt; None nếu mô hình làm mất/sai mã."""

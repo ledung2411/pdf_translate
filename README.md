@@ -27,7 +27,11 @@ lên dịch vụ bên ngoài.
   đè lên ảnh.
 - **Nhận diện bố cục bằng mô hình** DocLayout-YOLO (ONNX, CPU): phân biệt đoạn văn / công thức / bảng / hình /
   đầu-chân trang chính xác hơn; tự quay về luật nếu không có mô hình.
-- **Giữ công thức nguyên bản**: công thức đứng riêng không bị xóa/vẽ lại; công thức nội dòng in nghiêng.
+- **Giữ công thức nguyên bản & xuất LaTeX**: công thức đứng riêng giữ nguyên trong PDF; công thức nội dòng được vẽ lại
+  đúng chỉ số trên/dưới. Trong bản **Word** và **Markdown**, công thức được ghi bằng **LaTeX** (`$W_i^Q \in
+  \mathbb{R}^{d_{\mathrm{model}} \times d_k}$`, `$$\frac{QK^T}{\sqrt{d_k}} \tag{1}$$`) — dựng lại từ vị trí, cỡ chữ và
+  font của từng ký tự (chỉ số, phân số, căn, ∑/min có cận, dấu mũ, số phương trình). Công thức có ký tự riêng của font
+  không xác định được thì giữ ảnh cắt. Xem LaTeX dựng được: `python -m app.inspect bai_bao.pdf --page 5 --math`.
 - **Nhanh trên CPU**: mô hình chạy bằng CTranslate2 int8 — nhanh gấp 3 lần bản gốc mà không giảm chất lượng, ít RAM, không cần torch khi dịch (~9 giây/trang trên CPU 4 luồng).
 - **Không in ra rác**: câu dịch bị lặp/hỏng được dịch lại từng vế; vẫn hỏng thì giữ tiếng Anh và gắn cờ.
 - **Chấm điểm từng câu & tô vàng đoạn nghi ngờ**: mất số liệu/trích dẫn, sót tiếng Anh, sai thuật ngữ, độ dài

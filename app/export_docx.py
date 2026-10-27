@@ -16,6 +16,7 @@ from pathlib import Path
 import pymupdf
 
 from .ir import Document, Region
+from .mathtex import find_math
 from .pipeline import MATH_END, MATH_START, SUP_END, SUP_START
 from .scientific import translate_heading
 
@@ -46,11 +47,34 @@ def reading_order(items: list[tuple[pymupdf.Rect, object]], page_width: float) -
     return out
 
 
-def _add_runs(par, text: str, math_spans: list[str], highlight: bool, base_size: float | None = None) -> None:
+def _add_runs(par, text: str, math_spans: list[str], highlight: bool, base_size: float | None = None,
+              math_latex: dict[str, str] | None = None) -> None:
+    """Thêm đoạn chữ vào Word: công thức nội dòng dựng được thì ghi LaTeX ``$...$``."""
     from docx.enum.text import WD_COLOR_INDEX
     from docx.shared import Pt
 
     text = text.replace(MATH_START, "").replace(MATH_END, "")
+    if not math_latex:
+        _add_plain_runs(par, text, math_spans, highlight, base_size)
+        return
+    pos = 0
+    for a, b, key in find_math(text, list(math_latex)):
+        _add_plain_runs(par, text[pos:a], math_spans, highlight, base_size)
+        run = par.add_run(f"${math_latex[key]}$")
+        if base_size:
+            run.font.size = Pt(base_size)
+        if highlight:
+            run.font.highlight_color = WD_COLOR_INDEX.YELLOW
+        pos = b
+    _add_plain_runs(par, text[pos:], math_spans, highlight, base_size)
+
+
+def _add_plain_runs(par, text: str, math_spans: list[str], highlight: bool, base_size: float | None = None) -> None:
+    from docx.enum.text import WD_COLOR_INDEX
+    from docx.shared import Pt
+
+    if not text:
+        return
     # Đánh dấu vùng in nghiêng (công thức nội dòng) bằng chỉ mục ký tự
     italic = [False] * len(text)
     for m in sorted(set(math_spans), key=len, reverse=True):
@@ -162,6 +186,11 @@ def build_docx(ir: Document, source_pdf: pymupdf.Document, out_path: Path, highl
                 doc.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.CENTER
                 continue
             r: Region = obj
+            if r.kind == "math" and r.latex:
+                par = doc.add_paragraph()
+                par.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                par.add_run(f"$${r.latex}$$")
+                continue
             if r.kind in _AS_IMAGE:
                 width = min(usable, int(usable * r.bbox.width / page.rect.width * 1.4))
                 doc.add_picture(io.BytesIO(_crop_png(page, r.bbox)), width=max(width, Inches(0.5)))
@@ -175,7 +204,7 @@ def build_docx(ir: Document, source_pdf: pymupdf.Document, out_path: Path, highl
             level = _heading_level(r, body_size)
             if level is not None:
                 h = doc.add_heading(level=level)
-                _add_runs(h, text, r.math_spans, highlight and is_doubtful(r))
+                _add_runs(h, text, r.math_spans, highlight and is_doubtful(r), math_latex=r.math_latex)
                 continue
             par = doc.add_paragraph()
             if r.align == "center":
@@ -183,7 +212,7 @@ def build_docx(ir: Document, source_pdf: pymupdf.Document, out_path: Path, highl
             elif r.align == "justify":
                 par.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
             small = 9 if r.font_size < body_size * 0.9 else None
-            _add_runs(par, text, r.math_spans, highlight and is_doubtful(r), base_size=small)
+            _add_runs(par, text, r.math_spans, highlight and is_doubtful(r), base_size=small, math_latex=r.math_latex)
             if r.bold:
                 for run in par.runs:
                     run.bold = True

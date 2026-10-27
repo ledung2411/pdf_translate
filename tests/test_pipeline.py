@@ -94,9 +94,21 @@ def test_nmt_never_sees_placeholders_or_markers():
     )
     (out,) = tr.translate_texts([src])
     assert eng.calls and all("{" not in c and "\ue000" not in c and "\ue002" not in c for c in eng.calls)
-    assert "x ∈ ℝ" in eng.calls[0] and "cm²" in eng.calls[0]
+    # Công thức đi qua mô hình dưới dạng mã viết tắt, rồi được trả lại nguyên văn
+    assert "x ∈ ℝ" not in eng.calls[0] and "ZQX" in eng.calls[0] and "cm²" in eng.calls[0]
+    assert "x ∈ ℝ" in out
     # Thuật ngữ & nhãn được Việt hóa sau khi dịch
     assert "học sâu" in out and "Hình 3" in out
+
+
+def test_math_kept_raw_when_terms_off(monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "nmt_terms", "off")
+    eng = NMTEcho()
+    tr = TextTranslator(eng, Glossary(load_builtin_glossary()), use_cache=False)
+    (out,) = tr.translate_texts([f"Let {MATH_START}x ∈ ℝ{MATH_END} be the input."])
+    assert "x ∈ ℝ" in eng.calls[0] and "x ∈ ℝ" in out
 
 
 def test_upper_and_title_case_normalized_for_nmt():
