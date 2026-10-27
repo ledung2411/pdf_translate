@@ -161,7 +161,10 @@ class TermNMT(NMTEcho):
         return out
 
 
-def test_nmt_terms_off_by_default_keeps_wrong_term():
+def test_nmt_terms_off_keeps_wrong_term(monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "nmt_terms", "off")
     tr = TextTranslator(TermNMT(), Glossary(load_builtin_glossary()), use_cache=False)
     (out,) = tr.translate_texts(["We minimize the loss function."])
     assert "chức năng mất" in out
@@ -199,3 +202,27 @@ def test_nmt_terms_codeswitch_mode(monkeypatch):
     tr = TextTranslator(eng, Glossary({"loss function": "hàm mất mát", "attention head": "đầu chú ý"}), use_cache=False)
     (out,) = tr.translate_texts(["Each attention head minimizes the loss function."])
     assert "hàm mất mát" in out and "đầu chú ý" in out
+
+
+class HeadFinalNMT(NMTEcho):
+    """Giả lập mô hình đảo trật tự ("Loss function design" → "Thiết kế <thuật ngữ>")."""
+
+    key = "headfinal"
+
+    def translate_batch(self, texts, glossary=None):
+        self.calls.extend(texts)
+        out = []
+        for t in texts:
+            m = re.match(r"^(\d[\d.]*\s+)?(ZQX[A-Z]) design$", t)
+            out.append(f"{m.group(1) or ''}Thiết kế {m.group(2)}" if m else t.replace("The ", "", 1))
+        return out
+
+
+def test_nmt_terms_token_capitalization(monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "nmt_terms", "token")
+    tr = TextTranslator(HeadFinalNMT(), Glossary(load_builtin_glossary()), use_cache=False)
+    head, sent = tr.translate_texts(["2.2.4 Loss Function Design", "The learning rate was tuned."])
+    assert head == "2.2.4 Thiết kế hàm mất mát"  # giữa câu: chữ thường
+    assert sent.startswith("Tốc độ học")  # đầu câu: viết hoa

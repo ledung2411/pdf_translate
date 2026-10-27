@@ -12,6 +12,9 @@ lên dịch vụ bên ngoài.
   - Bảo vệ công thức toán (nhận diện font LaTeX: CMMI, CMSY, MSBM…), ký hiệu Hy Lạp, biểu thức như
     `p < 0.05`, `y = Wx + b`, trích dẫn `[1, 3]`, URL, DOI, arXiv ID, email, tên hàm/biến trong mã nguồn.
   - Bảng thuật ngữ gần 200 mục (Toán, Thống kê, AI/ML, Vật lý, Hóa, Y sinh) để dịch nhất quán; tự thêm thuật ngữ riêng.
+    Thuật ngữ được áp ngay trong câu nguồn nên mô hình không dịch sai được nữa
+    (VinAI tự dịch: "loss function" → "chức năng mất", "learning rate" → "tỷ lệ học tập", "lower bound" → "giới hạn
+    thấp hơn"; có bảng thuật ngữ: "hàm mất mát", "tốc độ học", "cận dưới").
   - **Tự trích thuật ngữ của bài** trước khi dịch: định nghĩa viết tắt (`diffusion MRI (dMRI)`), tên phương
     pháp/phần mềm lặp lại, cụm chuyên ngành (`cortical surface reconstruction`) — duyệt và điền bản dịch ngay trên giao diện.
   - Dịch chuẩn tiêu đề mục (Abstract → Tóm tắt, Related Work → Các công trình liên quan…) và nhãn
@@ -147,6 +150,7 @@ Rồi chọn engine **LLM cục bộ** trên giao diện. Mọi server có API t
 | `PDFTR_MAX_UPLOAD_MB` / `PDFTR_MAX_PAGES` | `100` / `500` | Giới hạn kích thước |
 | `PDFTR_JOB_TTL_HOURS` | `24` | Tự xoá kết quả cũ sau số giờ này |
 | `PDFTR_FONT_SERIF` / `PDFTR_FONT_SANS` | tự tìm | Đường dẫn font TTF có dấu tiếng Việt |
+| `PDFTR_NMT_TERMS` | `token` | Cách áp bảng thuật ngữ cho mô hình dịch máy (VinAI/OPUS/NLLB): `token` = thay thuật ngữ trong câu nguồn bằng mã rồi đổi lại thành tiếng Việt sau khi dịch; `codeswitch` = thay thẳng bằng tiếng Việt; `off` = chỉ sửa thuật ngữ còn sót tiếng Anh |
 | `PDFTR_QE_THRESHOLD` | `0.6` | Dưới ngưỡng này đoạn bị coi là nghi ngờ (tô vàng, gửi LLM sửa) |
 | `PDFTR_POSTEDIT_MAX_RATIO` | `0.3` | Tỉ lệ câu tối đa được LLM sửa |
 | `PDFTR_QE_BACKTRANS` | `0` | `1` = chấm điểm thêm bằng dịch ngược Việt→Anh (`PDFTR_BACKTRANS_MODEL`, mặc định opus-mt-vi-en) |

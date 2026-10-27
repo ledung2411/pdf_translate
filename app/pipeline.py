@@ -54,6 +54,17 @@ class _Unit:
     result: str | None = None
 
 
+def _match_first_letter(src: str, out: str) -> str:
+    """Chữ cái đầu của bản dịch viết hoa nếu câu gốc viết hoa (thuật ngữ thay vào có thể đứng đầu)."""
+    s = next((c for c in src if c.isalpha()), "")
+    for i, c in enumerate(out):
+        if c.isalpha():
+            if s.isupper() and c.islower():
+                return out[:i] + c.upper() + out[i + 1:]
+            return out
+    return out
+
+
 _TERM_TOKEN = "ZQX{}"
 _TERM_TOKEN_RE = re.compile(r"ZQX[A-Z]")
 
@@ -252,7 +263,11 @@ class TextTranslator:
             src = m.group(0)
             if " " not in src.strip() and "-" not in src and src.lower() in builtin:
                 return src
-            vi = self.glossary._match_case(src, self.glossary._lookup[src.lower()])
+            # Viết hoa theo vị trí trong câu dịch (sửa sau), không theo câu gốc: "Loss Function
+            # Design" → "Thiết kế hàm mất mát" chứ không phải "Thiết kế Hàm mất mát".
+            vi = self.glossary._lookup[src.lower()]
+            if src.isupper() and len(src) > 1:
+                vi = self.glossary._match_case(src, vi)  # viết tắt (CNN, MRI) giữ như bảng
             if mode == "codeswitch":
                 return vi
             if len(tokens) >= 26:
@@ -369,6 +384,8 @@ class TextTranslator:
                         t = self._run_engine([orig]).get(orig, orig)
                     else:
                         t = restored
+                if s in self._term_src:
+                    t = _match_first_letter(self._term_src[s], t)
                 if is_degenerate(s, t):
                     log.info("Bản dịch hỏng, dịch lại từng vế: %r -> %r", s[:80], t[:80])
                     t = self._repair(self._term_src.get(s, s))
@@ -426,15 +443,16 @@ class TextTranslator:
         for i, s in enumerate(low, 1):
             if self.status:
                 self.status(f"LLM đang sửa câu dịch kém: {i}/{len(low)}")
-            rel = self.glossary.relevant(s) if self.glossary is not None else None
+            src = self._term_src.get(s, s)  # LLM xem câu gốc, không xem câu đã thay mã thuật ngữ
+            rel = self.glossary.relevant(src) if self.glossary is not None else None
             try:
-                new = self.post_editor.post_edit(s, results.get(s, s), rel)
+                new = self.post_editor.post_edit(src, results.get(s, s), rel)
             except Exception as e:  # noqa: BLE001
                 log.warning("LLM sửa câu thất bại, giữ bản dịch máy: %s", e)
                 break
-            if not new or placeholder_ids(new) != placeholder_ids(s):
+            if not new or placeholder_ids(new) != placeholder_ids(src):
                 continue
-            q = self._qe(s, new)
+            q = self._qe(src, new)
             if q.score >= seg_qe[s].score:
                 results[s], seg_qe[s] = new, q
                 self._kept.discard(s)
