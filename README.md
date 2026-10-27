@@ -38,6 +38,11 @@ lên dịch vụ bên ngoài.
   bất thường… Đoạn điểm thấp được tô vàng trong PDF (chú thích, ẩn được khi in) kèm lý do.
 - **LLM cục bộ sửa có chọn lọc**: nếu Ollama/llama.cpp/LM Studio đang chạy, chỉ những câu điểm thấp nhất
   (tối đa 30%) được LLM hiệu đính — chất lượng tăng mà không chậm như dịch toàn bộ bằng LLM.
+- **Tóm tắt bài báo theo câu hỏi nghiên cứu**: bài toán & tình trạng hiện tại, tính cấp thiết, đóng góp, nguồn gốc ý
+  tưởng, phương pháp/kiến trúc, đầu vào – đầu ra, vì sao giải pháp phù hợp, dataset, cách đánh giá, baseline so sánh,
+  cải thiện được gì, ưu điểm, nhược điểm/hạn chế, mã nguồn công khai, hướng phát triển. Xuất Word, Markdown và trang
+  HTML (xem ngay trên trình duyệt). Link mã nguồn, tên dataset, tên phương pháp so sánh được tự nhận ra.
+- **Bản dễ hiểu cho người không chuyên**: câu ngắn, giải thích thuật ngữ trong ngoặc, giữ nguyên số liệu và công thức.
 - **Trang sửa bản dịch**: xem song song Anh – Việt, lọc đoạn nghi ngờ, sửa rồi dựng lại PDF ngay; chỗ sửa được
   lưu vào **bộ nhớ dịch** và tự dùng lại ở những lần dịch sau.
 - Có ô **dịch nhanh đoạn văn**, bộ nhớ đệm bản dịch (dịch lại tài liệu cũ rất nhanh), hàng đợi công việc,
@@ -139,6 +144,19 @@ PDFTR_LLM_MODEL=qwen2.5:7b ./run.sh
 
 Rồi chọn engine **LLM cục bộ** trên giao diện. Mọi server có API tương thích OpenAI chạy trên máy
 (llama.cpp `llama-server`, LM Studio, vLLM) đều dùng được qua `PDFTR_LLM_BASE_URL`.
+
+### Tóm tắt bài báo & bản dễ hiểu
+
+Tích **"Tóm tắt bài báo theo các câu hỏi nghiên cứu"** và/hoặc **"Tạo bản dễ hiểu cho người không chuyên"** khi gửi file,
+hoặc bấm **Tạo tóm tắt / Tạo bản dễ hiểu** ở bài đã dịch xong. Dòng lệnh: `python -m app.cli bai_bao.pdf --summary --plain`.
+
+| | Khi có LLM cục bộ (khuyên dùng) | Khi chưa có LLM |
+|---|---|---|
+| Tóm tắt | LLM trả lời từng câu hỏi **chỉ dựa trên các đoạn liên quan trích từ bài** (ghi "Bài báo không nêu rõ" nếu không có), kèm trích đoạn gốc để đối chiếu | Mỗi câu hỏi là 2–5 câu liên quan nhất trích từ bài, dịch sang tiếng Việt; kèm link code, tên dataset, baseline tự nhận ra |
+| Bản dễ hiểu | LLM viết lại từng mục bằng lời đơn giản | Bản dịch kèm giải thích thuật ngữ (từ `app/data/explain_vi.txt`) và khung "Khái niệm cần biết" |
+
+Mỗi lần gọi LLM chỉ gửi vài nghìn ký tự nên mô hình 7B chạy trên CPU vẫn dùng được (Qwen2.5 7B/Qwen3 8B viết tiếng Việt
+tốt; máy yếu dùng `qwen2.5:3b`). Tóm tắt một bài ~15 trang: vài phút; bản dễ hiểu cả bài: lâu hơn (gọi LLM theo từng mục).
 
 ## Cấu hình (biến môi trường)
 

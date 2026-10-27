@@ -1,0 +1,110 @@
+# Giải thích thuật ngữ cho người không chuyên — dùng cho "bản dễ hiểu" khi chưa có LLM cục bộ.
+# Mỗi dòng: thuật ngữ tiếng Việt (như trong bản dịch) | thuật ngữ tiếng Anh = lời giải thích ngắn
+# Lời giải thích được chèn trong ngoặc ở lần xuất hiện đầu tiên của thuật ngữ.
+
+# --- Trí tuệ nhân tạo / học máy ---
+trí tuệ nhân tạo | artificial intelligence = máy tính làm những việc vốn cần trí thông minh của con người
+học máy | machine learning = máy tính tự rút ra quy luật từ dữ liệu thay vì được lập trình từng bước
+học sâu | deep learning = học máy dùng mạng nơ-ron nhiều lớp
+mạng nơ-ron tích chập | convolutional neural network = loại mạng nơ-ron chuyên xử lý ảnh bằng cách quét các vùng nhỏ của ảnh
+mạng nơ-ron hồi quy | recurrent neural network = mạng nơ-ron xử lý dữ liệu dạng chuỗi, nhớ thông tin từ các bước trước
+mạng nơ-ron | neural network = mô hình toán học gồm nhiều "nút" nối với nhau, mô phỏng sơ lược cách não xử lý thông tin
+học có giám sát | supervised learning = máy học từ các ví dụ đã có sẵn đáp án đúng
+học không giám sát | unsupervised learning = máy tự tìm cấu trúc trong dữ liệu không có đáp án
+học bán giám sát | semi-supervised learning = máy học từ một ít dữ liệu có đáp án và nhiều dữ liệu không có đáp án
+học tự giám sát | self-supervised learning = máy tự tạo "bài tập" từ chính dữ liệu để học, không cần người gán nhãn
+giám sát yếu | weakly supervised = huấn luyện với đáp án không đầy đủ hoặc không thật chính xác, rẻ hơn gán nhãn tỉ mỉ
+học tăng cường | reinforcement learning = máy học bằng cách thử – sai và nhận thưởng/phạt
+học chuyển giao | transfer learning = dùng lại kiến thức mô hình đã học ở bài toán khác cho bài toán mới
+học liên kết | federated learning = nhiều nơi cùng huấn luyện một mô hình mà không phải gửi dữ liệu gốc cho nhau
+cơ chế chú ý | attention mechanism = cách để mô hình tự chọn phần thông tin quan trọng nhất cần tập trung
+chú ý đa đầu | multi-head attention = nhiều cơ chế chú ý chạy song song, mỗi cái để ý một khía cạnh khác nhau
+tự chú ý | self-attention = mỗi phần của dữ liệu "nhìn" các phần còn lại để hiểu ngữ cảnh
+mô hình ngôn ngữ lớn | large language model = mô hình học từ lượng văn bản khổng lồ để hiểu và viết ngôn ngữ (như ChatGPT)
+bộ mã hóa | encoder = phần mô hình nén dữ liệu đầu vào thành các đặc trưng gọn hơn
+bộ giải mã | decoder = phần mô hình dựng lại kết quả từ các đặc trưng đã nén
+trích xuất đặc trưng | feature extraction = rút ra những thông tin hữu ích, đặc trưng nhất từ dữ liệu thô
+bản đồ đặc trưng | feature map = kết quả trung gian của mạng, cho biết ở mỗi vị trí có những đặc điểm gì
+đặc trưng | feature = thông tin đặc điểm rút ra từ dữ liệu để mô hình dùng
+hàm kích hoạt | activation function = phép biến đổi phi tuyến giúp mạng học được quan hệ phức tạp
+hàm mất mát | loss function = con số đo mức sai của mô hình; huấn luyện là tìm cách làm con số này nhỏ đi
+hàm mục tiêu | objective function = đại lượng cần làm lớn nhất hoặc nhỏ nhất khi tối ưu
+hạ gradient ngẫu nhiên | stochastic gradient descent = cách chỉnh tham số dần dần theo hướng giảm sai số, mỗi lần dùng một phần nhỏ dữ liệu
+hạ gradient | gradient descent = cách chỉnh tham số từng bước theo hướng làm sai số giảm nhanh nhất
+lan truyền ngược | backpropagation = cách tính xem mỗi tham số góp bao nhiêu vào sai số để điều chỉnh
+tốc độ học | learning rate = độ lớn của mỗi bước điều chỉnh tham số khi huấn luyện
+kích thước batch | batch size = số mẫu dữ liệu xử lý cùng lúc trong một bước huấn luyện
+siêu tham số | hyperparameter = thông số do người làm chọn trước khi huấn luyện (không do mô hình tự học)
+tinh chỉnh | fine-tuning = huấn luyện thêm một mô hình có sẵn trên dữ liệu của bài toán mới
+tiền huấn luyện | pre-training = huấn luyện trước trên dữ liệu lớn, chung chung, rồi mới dùng cho bài toán cụ thể
+quá khớp | overfitting = mô hình "học thuộc lòng" dữ liệu huấn luyện nên làm kém trên dữ liệu mới
+chính quy hóa | regularization = kỹ thuật hạn chế mô hình học thuộc lòng
+tập huấn luyện | training set = phần dữ liệu dùng để dạy mô hình
+tập kiểm định | validation set = phần dữ liệu dùng để chọn cấu hình tốt nhất trong lúc huấn luyện
+tập kiểm tra | test set = phần dữ liệu để chấm điểm mô hình sau cùng, mô hình chưa từng thấy
+tập dữ liệu | dataset = bộ dữ liệu dùng để huấn luyện hoặc đánh giá
+nhãn thực | ground truth = đáp án đúng dùng để so sánh với kết quả của mô hình
+mô hình cơ sở | baseline = phương pháp có sẵn dùng làm mốc để so sánh
+tiên tiến nhất | state-of-the-art = tốt nhất hiện có tại thời điểm công bố
+nghiên cứu loại bỏ thành phần | ablation study = bỏ lần lượt từng phần của phương pháp để xem phần nào thực sự có ích
+đầu-cuối | end-to-end = một mô hình đi thẳng từ dữ liệu vào đến kết quả, không cần các bước xử lý tay ở giữa
+bộ đánh giá chuẩn | benchmark = bộ dữ liệu/bài kiểm tra chung để các phương pháp so tài
+suy luận | inference = dùng mô hình đã huấn luyện để đưa ra kết quả cho dữ liệu mới
+tham số | parameter = các con số bên trong mô hình được điều chỉnh khi huấn luyện
+phân đoạn | segmentation = tách ảnh thành các vùng, mỗi điểm ảnh được gán vào một loại (ví dụ chất trắng, chất xám)
+phân loại | classification = xếp dữ liệu vào một trong các nhóm cho trước
+hồi quy | regression = dự đoán một con số liên tục (ví dụ tuổi, nhiệt độ)
+tích chập | convolution = phép tính trượt một "khung lọc" nhỏ trên ảnh để phát hiện các mẫu hình
+
+# --- Thống kê ---
+độ lệch chuẩn | standard deviation = mức độ các giá trị phân tán quanh giá trị trung bình
+phương sai | variance = bình phương độ lệch chuẩn, đo mức phân tán của dữ liệu
+khoảng tin cậy | confidence interval = khoảng giá trị mà ta khá chắc chắn chứa giá trị thật
+giá trị p | p-value = xác suất thấy kết quả như vậy nếu thực ra không có khác biệt; càng nhỏ càng đáng tin là có khác biệt thật
+có ý nghĩa thống kê | statistically significant = khác biệt đủ lớn để khó có thể do ngẫu nhiên
+kiểm định giả thuyết | hypothesis testing = cách dùng dữ liệu để kết luận một giả định có đúng không
+hệ số tương quan | correlation coefficient = con số từ -1 đến 1 cho biết hai đại lượng biến đổi cùng chiều hay ngược chiều mạnh tới đâu
+sai số bình phương trung bình | mean squared error = trung bình bình phương độ chênh giữa dự đoán và giá trị thật
+sai số tuyệt đối trung bình | mean absolute error = trung bình độ chênh (lấy trị tuyệt đối) giữa dự đoán và giá trị thật
+phân phối chuẩn | normal distribution = kiểu phân bố hình chuông, phần lớn giá trị nằm gần trung bình
+ước lượng hợp lý cực đại | maximum likelihood estimation = chọn tham số sao cho dữ liệu quan sát được là "có khả năng xảy ra nhất"
+hồi quy tuyến tính | linear regression = dự đoán bằng một đường thẳng (hoặc mặt phẳng) khớp nhất với dữ liệu
+cỡ mẫu | sample size = số lượng đối tượng/mẫu trong nghiên cứu
+điểm ngoại lai | outlier = giá trị khác thường, lệch hẳn so với phần còn lại
+
+# --- Toán ---
+tối ưu hóa | optimization = tìm phương án tốt nhất theo một tiêu chí
+cận dưới | lower bound = giá trị mà đại lượng chắc chắn không thể nhỏ hơn
+cận trên | upper bound = giá trị mà đại lượng chắc chắn không thể lớn hơn
+ma trận | matrix = bảng số xếp theo hàng và cột
+vectơ | vector = dãy số có thứ tự, thường biểu diễn một điểm hoặc một hướng
+đạo hàm | derivative = tốc độ thay đổi của một đại lượng
+nghiệm dạng tường minh | closed-form solution = lời giải viết được thành công thức cụ thể
+biến đổi Fourier | Fourier transform = cách phân tích tín hiệu thành tổng các sóng có tần số khác nhau
+đa tạp | manifold = hình học "cong" nhưng nhìn gần từng chỗ thì giống mặt phẳng
+
+# --- Y sinh / ảnh y khoa ---
+cộng hưởng từ khuếch tán | diffusion MRI = kỹ thuật chụp cộng hưởng từ đo chuyển động của nước trong mô, cho biết cấu trúc vi mô của não
+cộng hưởng từ | magnetic resonance imaging = kỹ thuật chụp ảnh bên trong cơ thể bằng từ trường, không dùng tia X
+vỏ não | cortex = lớp chất xám mỏng phủ ngoài cùng của não
+chất trắng | white matter = phần não chứa các bó sợi thần kinh nối các vùng não với nhau
+chất xám | gray matter = phần não chứa thân tế bào thần kinh
+dị hướng phân đoạn | fractional anisotropy = chỉ số cho biết nước khuếch tán theo một hướng ưu tiên tới mức nào (cao ở các bó sợi thần kinh)
+đăng ký ảnh | image registration = căn chỉnh hai ảnh cho các vị trí tương ứng trùng nhau
+nhóm chứng | control group = nhóm đối tượng không nhận can thiệp, dùng để so sánh
+nhóm đối chứng | control group = nhóm đối tượng không nhận can thiệp, dùng để so sánh
+thử nghiệm lâm sàng | clinical trial = nghiên cứu trên người để kiểm tra hiệu quả và an toàn của phương pháp điều trị
+in vitro | in vitro = làm trong ống nghiệm, ngoài cơ thể sống
+in vivo | in vivo = làm trên cơ thể sống
+biểu hiện gen | gene expression = mức độ một gen được "bật" để tạo ra protein
+yếu tố nguy cơ | risk factor = yếu tố làm tăng khả năng mắc bệnh
+tỉ số chênh | odds ratio = con số so sánh khả năng xảy ra sự kiện giữa hai nhóm
+
+# --- Vật liệu / vật lý ---
+màng mỏng | thin film = lớp vật liệu rất mỏng (từ vài nanomet đến vài micromet) phủ trên bề mặt
+chất bán dẫn | semiconductor = vật liệu dẫn điện ở mức trung gian, nền tảng của chip điện tử
+vùng cấm | band gap = mức năng lượng mà electron cần vượt qua để vật liệu dẫn điện
+nhiễu xạ tia X | X-ray diffraction = chiếu tia X vào vật liệu để suy ra cách các nguyên tử sắp xếp
+độ dẫn nhiệt | thermal conductivity = khả năng truyền nhiệt của vật liệu
+chất xúc tác | catalyst = chất làm phản ứng hóa học xảy ra nhanh hơn mà không bị tiêu hao
+lý thuyết phiếm hàm mật độ | density functional theory = phương pháp tính toán tính chất của vật liệu từ cơ học lượng tử

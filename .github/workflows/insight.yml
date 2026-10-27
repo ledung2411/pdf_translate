@@ -1,0 +1,51 @@
+# Chạy thử tóm tắt bài báo & bản dễ hiểu với một LLM cục bộ thật (Ollama, CPU).
+name: Insight
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - app/insight.py
+      - app/plain.py
+      - .github/workflows/insight.yml
+
+jobs:
+  insight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      PYTHONUTF8: "1"
+      PDFTR_ENABLE_MOCK: "1"
+      PDFTR_LAYOUT: "off"
+      PDFTR_LLM_MODEL: qwen2.5:3b
+      PDFTR_POSTEDIT_MAX_RATIO: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Cài thư viện
+        run: pip install -r requirements.txt
+      - name: Cài Ollama và mô hình qwen2.5:3b
+        run: |
+          curl -fsSL https://ollama.com/install.sh | sh
+          (ollama serve > ollama.log 2>&1 &)
+          for i in $(seq 1 30); do curl -sf http://localhost:11434/api/version && break; sleep 2; done
+          ollama pull qwen2.5:3b
+      - name: Tải bài báo mẫu
+        run: curl -sSL -o attention.pdf https://arxiv.org/pdf/1706.03762v7
+      - name: Tóm tắt (cả bài) và bản dễ hiểu (2 trang đầu)
+        run: |
+          time python -m app.cli attention.pdf -e mock -o out --no-bilingual --summary
+          time python -m app.cli attention.pdf -e mock -o out2 --no-bilingual --pages 1-2 --plain
+          cat out/attention_tom_tat.md | tee -a "$GITHUB_STEP_SUMMARY"
+          head -c 6000 out2/attention_de_hieu.md
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: insight
+          path: |
+            out/attention_tom_tat.*
+            out2/attention_de_hieu.*
+            ollama.log
