@@ -186,6 +186,17 @@ def test_stubborn_refusal_falls_back_to_translated_evidence():
     assert fb and all("- Câu đã dịch Bảng 1" in a.text and "表" not in a.text for a in fb)
 
 
+def test_markdown_to_html_url_cannot_break_out_of_href():
+    from app.insight import markdown_to_html
+
+    # URL lấy từ PDF (nguồn tin thấp) cố chèn thuộc tính để chạy JS khi mở file HTML.
+    md = '**Link:** <https://github.com/x"autofocus/onfocus="alert(1)">'
+    html = markdown_to_html(md, "t")
+    # Dấu " trong URL phải bị escape bên trong href, không đóng sớm thuộc tính để chèn
+    # onfocus=... (nếu không thì JS chạy khi mở file HTML). Trong phần text hiển thị thì " vô hại.
+    assert 'href="https://github.com/x&quot;autofocus/onfocus=&quot;alert(1)&quot;"' in html
+
+
 def test_english_or_chinese_llm_output_is_rejected():
     from app.insight import has_cjk_run, is_mostly_english, strip_cjk
 

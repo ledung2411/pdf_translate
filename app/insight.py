@@ -589,6 +589,14 @@ def summary_markdown(s: Summary) -> str:
     return "\n".join(out).strip() + "\n"
 
 
+def _html_link(m: re.Match) -> str:
+    """Dựng thẻ <a> từ URL lấy trong bài; escape dấu nháy để URL không phá được thuộc tính href
+    (URL đến từ PDF của người dùng, có thể cố chèn ``"autofocus onfocus=...`` → XSS)."""
+    url = m.group(1)
+    href = url.replace('"', "&quot;").replace("'", "&#39;")
+    return f'<a href="{href}" target="_blank" rel="noopener noreferrer">{url}</a>'
+
+
 def markdown_to_html(md: str, title: str) -> str:
     """Markdown đơn giản (tiêu đề, gạch đầu dòng, đậm, link, công thức) → trang HTML xem trên trình duyệt."""
     body: list[str] = []
@@ -604,7 +612,7 @@ def markdown_to_html(md: str, title: str) -> str:
         esc = html.escape(raw, quote=False)
         esc = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", esc)
         esc = re.sub(r"(?<![\w*])_(.+?)_(?![\w*])", r"<i>\1</i>", esc)
-        esc = re.sub(r"&lt;(https?://[^&\s]+)&gt;", r'<a href="\1" target="_blank">\1</a>', esc)
+        esc = re.sub(r"&lt;(https?://[^&\s]+)&gt;", _html_link, esc)
         esc = re.sub(r"`([^`]+)`", r"<code>\1</code>", esc)
         if raw.startswith("- "):
             if not in_list:
