@@ -113,6 +113,8 @@ def clean_rewrite(text: str) -> str:
             continue  # "MỤC: 1 Introduction"
         lines.append(_LEAKED_PREFIX.sub("", line))
     out = "\n".join(lines).strip()
+    # Câu dẫn chép lại từ câu lệnh: 'Đoạn trích thuộc mục "2 Background" của một bài báo khoa học nói về ...'
+    out = re.sub(r"^Đoạn trích (thuộc|này|trên)\b(?:\"[^\"\n]*\"|[^.\"\n])*[.:]\s*", "", out, flags=re.I)
     return re.sub(r"\n{3,}", "\n\n", out)
 
 

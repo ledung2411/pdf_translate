@@ -118,6 +118,8 @@ def attention_like() -> Document:
         region("∗Equal contribution. Jakob proposed replacing RNNs with self-attention and started the effort.",
                700, 8),
         region("31st Conference on Neural Information Processing Systems (NIPS 2017), Long Beach, CA, USA.", 760, 8),
+    ]
+    regs2 = [
         region("1 Introduction", 130, 12, True),
         region("Recurrent models preclude parallelization within training examples, which becomes critical at longer "
                "sequence lengths. Attention mechanisms have become an integral part of sequence models.", 150),
@@ -133,7 +135,10 @@ def attention_like() -> Document:
         region("The code we used to train and evaluate our models is available at https://github.com/ "
                "tensorflow/tensor2tensor.", 340),
     ]
-    return Document(source="attention.pdf", pages=[Page(index=0, number=1, width=600, height=800, regions=regs)])
+    for r in regs2:
+        r.page_index = 1
+    return Document(source="attention.pdf", pages=[Page(index=0, number=1, width=600, height=800, regions=regs),
+                                                   Page(index=1, number=2, width=600, height=800, regions=regs2)])
 
 
 def test_footnotes_rationale_urls_and_baselines():
@@ -151,9 +156,17 @@ def test_footnotes_rationale_urls_and_baselines():
 
 
 class RefusingLLM(FakeLLM):
+    def __init__(self, stubborn=False):
+        super().__init__()
+        self.stubborn = stubborn
+
     def _chat(self, system, user):
         self.calls.append((system, user))
-        return "Bài báo không nêu rõ." if "Lưu ý:" not in user else "- Có trả lời"
+        if system.startswith("Dịch các câu"):
+            return "- Câu đã dịch 表 1"
+        if "Lưu ý:" in user and not self.stubborn:
+            return "- [1 Introduction] Có trả lời"
+        return "Bài báo không nêu rõ."
 
 
 def test_refusal_is_retried_once():
@@ -161,10 +174,19 @@ def test_refusal_is_retried_once():
     s = summarize(paper(), llm=llm)
     retried = [u for _, u in llm.calls if "Lưu ý:" in u]
     assert retried and len(llm.calls) == len(QUESTIONS) + len(retried)
-    assert any(a.text.startswith("- Có trả lời") for a in s.answers)
+    assert any(a.text.startswith("- Có trả lời") for a in s.answers)  # thẻ "[1 Introduction]" đã bỏ
+    assert "không nêu rõ" not in llm.calls[len(QUESTIONS)][0].split("Quy tắc:")[1]  # lần hỏi lại không cho né
+
+
+def test_stubborn_refusal_falls_back_to_translated_evidence():
+    s = summarize(paper(), llm=RefusingLLM(stubborn=True))
+    fb = [a for a in s.answers if "không tự tổng hợp" in a.text]
+    assert fb and all("- Câu đã dịch Bảng 1" in a.text and "表" not in a.text for a in fb)
 
 
 def test_clean_rewrite_strips_leaked_labels():
+    assert clean_rewrite('Đoạn trích thuộc mục "3.2 Attention" của một bài báo nói về X. Cơ chế chú ý.') \
+        == "Cơ chế chú ý."
     out = clean_rewrite("MỤC: Tóm tắt\n\nĐOẠN GỐC (tiếng Anh):\nMô hình mới đơn giản hơn.\n\n"
                         "BẢN DỊCH MÁY (để tham khảo):\n<<<\nNó nhanh hơn.\n>>>")
     assert out == "Mô hình mới đơn giản hơn.\n\nNó nhanh hơn."
