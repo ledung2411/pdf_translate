@@ -13,7 +13,9 @@ from .scientific import (
     PLACEHOLDER_RE,
     Glossary,
     Protector,
+    _variants,
     has_translatable_text,
+    load_builtin_glossary,
     placeholder_ids,
     split_sentences,
     translate_heading,
@@ -50,6 +52,10 @@ class _Unit:
     cases: list[str] = field(default_factory=list)  # cách viết hoa gốc của từng câu
     prefix: str = ""  # nhãn đầu đoạn đã dịch sẵn ("TÓM TẮT ", "Từ khóa: ")
     result: str | None = None
+
+
+_TERM_TOKEN = "ZQX{}"
+_TERM_TOKEN_RE = re.compile(r"ZQX[A-Z]")
 
 
 _TITLE_FUNCTION_WORDS = {
@@ -153,6 +159,9 @@ class TextTranslator:
         # Mô hình Việt→Anh để chấm điểm bằng dịch ngược (tùy chọn).
         self.back_translator = back_translator
         self.status = status
+        self._term_src: dict[str, str] = {}  # câu đã thay thuật ngữ → câu gốc
+        self._term_tokens: dict[str, dict[str, str]] = {}  # câu đã thay → {mã: tiếng Việt}
+        self._builtin_terms = {v.lower() for en in load_builtin_glossary() for v in _variants(en)}
         # Kết quả theo từng đoạn của lần translate_texts gần nhất:
         self.kept_english: list[bool] = []  # có câu phải giữ tiếng Anh (bản dịch hỏng)
         self.scores: list[float] = []  # điểm chất lượng thấp nhất trong đoạn (0..1)
@@ -220,9 +229,53 @@ class TextTranslator:
             t = t[m.end():]
         for seg in split_sentences(t, max_len=400):
             seg, mode = normalize_case(seg)
+            seg = self._sub_terms(seg)
             unit.segments.append(seg)
             unit.cases.append(mode)
         return unit
+
+    # -- thuật ngữ cho mô hình dịch máy ---------------------------------------
+
+    def _sub_terms(self, seg: str) -> str:
+        """Áp thuật ngữ ngay trong câu nguồn (PDFTR_NMT_TERMS) vì mô hình dịch máy hay dịch
+        sai thuật ngữ ghép ("loss function" → "chức năng mất") mà sửa sau không được nữa.
+
+        Chỉ thay thuật ngữ nhiều từ của bảng mặc định và mọi thuật ngữ người dùng tự thêm.
+        """
+        mode = settings.nmt_terms
+        if mode not in ("codeswitch", "token") or self.glossary is None or self.glossary._re is None:
+            return seg
+        builtin = self._builtin_terms
+        tokens: dict[str, str] = {}
+
+        def rep(m: re.Match) -> str:
+            src = m.group(0)
+            if " " not in src.strip() and "-" not in src and src.lower() in builtin:
+                return src
+            vi = self.glossary._match_case(src, self.glossary._lookup[src.lower()])
+            if mode == "codeswitch":
+                return vi
+            if len(tokens) >= 26:
+                return src
+            tok = _TERM_TOKEN.format(chr(65 + len(tokens)))
+            tokens[tok] = vi
+            return tok
+
+        out = self.glossary._re.sub(rep, seg)
+        if out != seg:
+            self._term_src[out] = seg
+            if tokens:
+                self._term_tokens[out] = tokens
+        return out
+
+    def _restore_terms(self, seg: str, result: str) -> str | None:
+        """Đổi mã thuật ngữ về tiếng Việt; None nếu mô hình làm mất/sai mã."""
+        tokens = self._term_tokens.get(seg)
+        if not tokens:
+            return result
+        if sorted(_TERM_TOKEN_RE.findall(result)) != sorted(tokens):
+            return None
+        return _TERM_TOKEN_RE.sub(lambda m: tokens[m.group(0)], result)
 
     # -- dịch -------------------------------------------------------------
 
@@ -309,9 +362,16 @@ class TextTranslator:
                 if placeholder_ids(t) != placeholder_ids(s):
                     log.debug("Placeholder lệch, dịch từng phần: %r -> %r", s, t)
                     t = self._translate_piecewise(s)
+                if s in self._term_tokens:
+                    restored = self._restore_terms(s, t)
+                    if restored is None:  # mô hình làm mất mã thuật ngữ → dịch câu gốc như thường
+                        orig = self._term_src[s]
+                        t = self._run_engine([orig]).get(orig, orig)
+                    else:
+                        t = restored
                 if is_degenerate(s, t):
                     log.info("Bản dịch hỏng, dịch lại từng vế: %r -> %r", s[:80], t[:80])
-                    t = self._repair(s)
+                    t = self._repair(self._term_src.get(s, s))
                 results[s] = t
             done += len(batch)
             if progress:
@@ -355,7 +415,7 @@ class TextTranslator:
                 backs = dict(zip(segs, self.back_translator.translate_batch(outs)))
             except Exception as e:  # noqa: BLE001  (chấm điểm là phụ, không làm hỏng cả job)
                 log.warning("Không dịch ngược được để chấm điểm: %s", e)
-        return {s: self._qe(s, results.get(s, s), backs.get(s)) for s in segs}
+        return {s: self._qe(self._term_src.get(s, s), results.get(s, s), backs.get(s)) for s in segs}
 
     def _post_edit(self, segs: list[str], results: dict[str, str], seg_qe: dict[str, QE]) -> set[str]:
         """Gửi các câu điểm thấp nhất cho LLM sửa; chỉ nhận bản sửa nếu điểm không giảm."""

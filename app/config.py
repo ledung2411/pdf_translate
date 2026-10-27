@@ -41,6 +41,9 @@ class Settings:
     ocr_dpi: int = int(os.environ.get("PDFTR_OCR_DPI", "300"))
     # Chấm điểm chất lượng & sửa câu kém bằng LLM cục bộ
     qe_threshold: float = float(os.environ.get("PDFTR_QE_THRESHOLD", "0.6"))
+    # Áp thuật ngữ cho mô hình dịch máy (VinAI/OPUS/NLLB) ngay trong câu nguồn:
+    # off | codeswitch (thay bằng tiếng Việt) | token (thay bằng mã viết tắt rồi đổi lại)
+    nmt_terms: str = os.environ.get("PDFTR_NMT_TERMS", "off")
     postedit_max_ratio: float = float(os.environ.get("PDFTR_POSTEDIT_MAX_RATIO", "0.3"))
     qe_backtrans: bool = _env_bool("PDFTR_QE_BACKTRANS", False)
     backtrans_model: str = os.environ.get("PDFTR_BACKTRANS_MODEL", "Helsinki-NLP/opus-mt-vi-en")
