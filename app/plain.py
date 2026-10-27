@@ -163,7 +163,7 @@ def make_plain(ir: Document, llm=None, status=None) -> str:
                 en = "\n\n".join(p[0] for p in chunk)
                 vi = "\n\n".join(p[1] for p in chunk)
                 try:
-                    text = clean_rewrite(llm._chat(PLAIN_SYSTEM, plain_prompt(s.title, en, vi)))
+                    text = clean_rewrite(llm._chat(PLAIN_SYSTEM, plain_prompt(s.title, en, vi), max_tokens=1500))
                     if not text:
                         raise ValueError("LLM trả về rỗng")
                 except Exception as e:  # noqa: BLE001  (LLM lỗi → giữ bản dịch kèm giải thích)

@@ -488,7 +488,7 @@ class LLMTranslator(Translator):
         user += f"Dịch đoạn sau sang tiếng Việt:\n\n{text}"
         return self._chat(LLM_SYSTEM_PROMPT, user)
 
-    def _chat(self, system: str, user: str) -> str:
+    def _chat(self, system: str, user: str, max_tokens: int | None = None) -> str:
         payload = {
             "model": settings.llm_model,
             "messages": [
@@ -498,6 +498,8 @@ class LLMTranslator(Translator):
             "temperature": 0.1,
             "stream": False,
         }
+        if max_tokens:
+            payload["max_tokens"] = max_tokens  # chặn mô hình nhỏ lặp chữ vô tận
         try:
             res = self._request("POST", "/chat/completions", payload)
         except urllib.error.URLError as e:
