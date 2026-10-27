@@ -89,6 +89,33 @@ def explain_terms(text: str, used: set[str]) -> tuple[str, list[tuple[str, str]]
     return text, added
 
 
+def plain_prompt(title: str, en: str, vi: str) -> str:
+    """Câu lệnh viết lại: văn bản đặt trong khối <<< >>>, yêu cầu ở cuối (mô hình nhỏ hay chép lại nhãn đầu vào)."""
+    ref = f"\n\nBản dịch máy của đoạn trên (chỉ để tham khảo cách dịch thuật ngữ):\n<<<\n{vi}\n>>>" if vi != en else ""
+    return (f"Đoạn trích thuộc mục \"{title}\" của một bài báo khoa học:\n<<<\n{en}\n>>>{ref}\n\n"
+            "Hãy viết lại nội dung đoạn trích bằng tiếng Việt dễ hiểu cho người không chuyên. "
+            "Chỉ trả về đoạn văn đã viết lại, không chép lại các nhãn hay dấu <<< >>>.")
+
+
+# Nhãn đầu vào mà mô hình nhỏ có thể chép lại ở đầu câu trả lời
+_LEAKED = re.compile(r"^\s*(\**\s*(mục|đoạn gốc|đoạn trích|bản dịch máy|bản dịch|nguyên văn|bản viết lại|viết lại|"
+                     r"trả lời|kết quả)\b[^:\n]{0,40}:\s*\**\s*$|<<<|>>>)", re.I | re.M)
+_LEAKED_PREFIX = re.compile(r"^\s*\**(mục|đoạn gốc|bản dịch máy|bản viết lại|viết lại)\b[^:\n]{0,40}:\**\s*", re.I)
+
+
+def clean_rewrite(text: str) -> str:
+    """Bỏ nhãn đầu vào bị chép lại ("MỤC: ...", "ĐOẠN GỐC (tiếng Anh):", "<<<") khỏi bản viết lại."""
+    lines = []
+    for line in (text or "").splitlines():
+        if _LEAKED.match(line):
+            continue
+        if re.match(r"^\s*\**mục\b[^:\n]{0,10}:", line, re.I) and len(line) < 120:
+            continue  # "MỤC: 1 Introduction"
+        lines.append(_LEAKED_PREFIX.sub("", line))
+    out = "\n".join(lines).strip()
+    return re.sub(r"\n{3,}", "\n\n", out)
+
+
 def _chunks(paras: list[tuple[str, str]], limit: int = 2200) -> list[list[tuple[str, str]]]:
     out: list[list[tuple[str, str]]] = []
     size = 0
@@ -134,8 +161,9 @@ def make_plain(ir: Document, llm=None, status=None) -> str:
                 en = "\n\n".join(p[0] for p in chunk)
                 vi = "\n\n".join(p[1] for p in chunk)
                 try:
-                    text = llm._chat(PLAIN_SYSTEM, f"MỤC: {s.title}\n\nĐOẠN GỐC (tiếng Anh):\n{en}\n\n"
-                                                   f"BẢN DỊCH MÁY (để tham khảo):\n{vi}")
+                    text = clean_rewrite(llm._chat(PLAIN_SYSTEM, plain_prompt(s.title, en, vi)))
+                    if not text:
+                        raise ValueError("LLM trả về rỗng")
                 except Exception as e:  # noqa: BLE001  (LLM lỗi → giữ bản dịch kèm giải thích)
                     log.warning("LLM lỗi khi viết bản dễ hiểu: %s", e)
                     text, added = explain_terms(vi, used)
