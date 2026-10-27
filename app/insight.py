@@ -432,7 +432,8 @@ _CJK = re.compile(r"[\u3000-\u303f\u4e00-\u9fff\uff00-\uffef]+")
 
 def strip_cjk(text: str) -> str:
     """Chữ Hán mà qwen đôi khi chèn vào câu tiếng Việt."""
-    return _CJK.sub("", text.replace("表", "Bảng ").replace("图", "Hình "))
+    text = _CJK.sub("", text.replace("表", " Bảng ").replace("图", " Hình "))
+    return re.sub(r"[ \t]{2,}", " ", text)
 
 
 def has_cjk_run(text: str, n: int = 4) -> bool:
@@ -453,7 +454,7 @@ def _clean_answer(text: str) -> str:
         seen.add(key)
         lines.append(line)
     text = "\n".join(lines)
-    text = re.sub(r"(?m)^(\s*[-*]\s*)\[[^\]\n]{1,60}\]\s*", r"\1", text or "")
+    text = re.sub(r"(?m)^(\s*[-*]\s*)(?:\[[^\]\n]{1,60}\]\s*)+", r"\1", text or "")
     text = strip_cjk(text)
     return re.sub(r"[ \t]{2,}", " ", text).strip()
 
@@ -512,7 +513,7 @@ def summarize(
             try:
                 prompt = _llm_context(q, ev, abstract, facts)
                 text = _clean_answer(llm._chat(SUMMARY_SYSTEM, prompt, max_tokens=ANSWER_TOKENS)) if (ev or abstract) else ""
-                if _is_refusal(text) and len(ev) >= 3:
+                if _is_refusal(text) and ev:
                     # Mô hình nhỏ hay né trả lời dù trích đoạn có thông tin → hỏi lại một lần, không cho
                     # lối "không nêu rõ"; vẫn né thì đưa các câu liên quan nhất (nhờ LLM dịch).
                     text = _clean_answer(llm._chat(RETRY_SYSTEM, prompt + RETRY_HINT, max_tokens=ANSWER_TOKENS)) or text
@@ -554,7 +555,9 @@ def _add_fact_lines(answers: list[Answer], facts: dict[str, list[str]]) -> None:
         elif a.question.key == "baseline" and facts["baselines"]:
             extra = "**Phương pháp xuất hiện trong phần so sánh:** " + ", ".join(facts["baselines"])
         if extra:
-            a.text = (a.text + "\n\n" + extra).strip()
+            # Đã tự tìm ra dữ kiện (link, tên dataset...) thì bỏ câu "không nêu rõ" mâu thuẫn với nó.
+            body = "" if _is_refusal(a.text) and a.question.key in ("code", "dataset") else a.text
+            a.text = (body + "\n\n" + extra).strip()
 
 
 def _guess_title(ir: Document) -> str:

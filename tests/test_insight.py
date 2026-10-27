@@ -165,7 +165,7 @@ class RefusingLLM(FakeLLM):
         if system.startswith("Dịch các câu"):
             return "- Câu đã dịch 表 1"
         if "Lưu ý:" in user and not self.stubborn:
-            return "- [1 Introduction] Có trả lời"
+            return "- [6.1 Machine Translation] [7 Conclusion] Có trả lời"
         return "Bài báo không nêu rõ."
 
 
@@ -180,6 +180,8 @@ def test_refusal_is_retried_once():
 
 def test_stubborn_refusal_falls_back_to_translated_evidence():
     s = summarize(paper(), llm=RefusingLLM(stubborn=True))
+    by_key = {a.question.key: a for a in s.answers}
+    assert "**Link tìm thấy trong bài:**" in by_key["code"].text and "không nêu rõ" not in by_key["code"].text
     fb = [a for a in s.answers if "không tự tổng hợp" in a.text]
     assert fb and all("- Câu đã dịch Bảng 1" in a.text and "表" not in a.text for a in fb)
 
@@ -189,7 +191,7 @@ def test_english_or_chinese_llm_output_is_rejected():
 
     assert is_mostly_english("- quality also drops off with too many heads. - our model achieves 28.4 BLEU on the task")
     assert not is_mostly_english("- Transformer đạt 28.4 BLEU trên WMT 2014, nhanh hơn RNN (https://github.com/x/y).")
-    assert has_cjk_run("một hiệu ứng mà chúng tôi đối抗通过多头注意力") and strip_cjk("trong 表 3") == "trong Bảng  3"
+    assert has_cjk_run("một hiệu ứng mà chúng tôi đối抗通过多头注意力") and strip_cjk("trong表 3") == "trong Bảng 3"
 
 
 def test_clean_rewrite_strips_leaked_labels():
