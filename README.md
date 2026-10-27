@@ -25,7 +25,7 @@ lên dịch vụ bên ngoài.
 - **Nhận diện bố cục bằng mô hình** DocLayout-YOLO (ONNX, CPU): phân biệt đoạn văn / công thức / bảng / hình /
   đầu-chân trang chính xác hơn; tự quay về luật nếu không có mô hình.
 - **Giữ công thức nguyên bản**: công thức đứng riêng không bị xóa/vẽ lại; công thức nội dòng in nghiêng.
-- **Nhanh trên CPU**: mô hình chạy bằng CTranslate2 int8 (nhanh hơn, ít RAM, không cần torch khi dịch).
+- **Nhanh trên CPU**: mô hình chạy bằng CTranslate2 int8 — nhanh gấp 3 lần bản gốc mà không giảm chất lượng, ít RAM, không cần torch khi dịch (~9 giây/trang trên CPU 4 luồng).
 - **Không in ra rác**: câu dịch bị lặp/hỏng được dịch lại từng vế; vẫn hỏng thì giữ tiếng Anh và gắn cờ.
 - **Chấm điểm từng câu & tô vàng đoạn nghi ngờ**: mất số liệu/trích dẫn, sót tiếng Anh, sai thuật ngữ, độ dài
   bất thường… Đoạn điểm thấp được tô vàng trong PDF (chú thích, ẩn được khi in) kèm lý do.
@@ -49,6 +49,31 @@ Mặc định (`auto`) dùng `vinai`. `opus` nhanh hơn nhưng dịch văn bản
 Mô hình Hugging Face chỉ cần tải **một lần** (tự động ở lần dịch đầu tiên hoặc dùng `scripts/download_models.py`),
 sau đó chạy offline hoàn toàn.
 
+## Kết quả đo
+
+Engine `vinai` chạy bằng CTranslate2 int8 (beam 4), chỉ dùng CPU: AMD EPYC 7763, 4 luồng (máy chủ GitHub Actions).
+
+| Chỉ số | Kết quả |
+|---|---|
+| Tốc độ dịch trọn bài báo | **9,4 giây/trang** — *Attention Is All You Need*, 15 trang, 4 178 từ, hết 141 s (phân tích bố cục 20 s, dịch 113 s, dựng PDF + Word 8 s) |
+| Tăng tốc nhờ int8 so với bản gốc fp32 | **3,0×** (100 câu: 151 s → 51 s) — chrF gần như giữ nguyên: 62,30 → 62,28 |
+| Chất lượng trên FLORES-200 devtest (1 012 câu Anh→Việt) | **chrF 60,7** · BLEU 43,5 |
+
+- Thời gian nạp mô hình (~5 s, một lần khi mở tool) không tính vào tốc độ trên.
+- FLORES-200 là tập thử chuẩn, nội dung lấy từ Wikipedia (gồm cả bài khoa học, y tế) — không phải bài báo
+  chuyên ngành, nên điểm trên văn bản khoa học thật có thể khác. Điểm đo trên mô hình dịch thô, chưa tính
+  bảng thuật ngữ và bước LLM sửa câu.
+- Máy có GPU sẽ nhanh hơn nhiều; máy CPU yếu hơn thì chậm hơn tương ứng.
+
+Tự đo lại (cần `pip install sacrebleu` và torch):
+
+```bash
+python scripts/benchmark.py --src eng.devtest --ref vie.devtest --pdf bai_bao.pdf
+```
+
+Hoặc chạy workflow **Benchmark** trong tab Actions trên GitHub (`.github/workflows/benchmark.yml`):
+nó tự tải mô hình, tập thử, bài báo mẫu và in bảng kết quả.
+
 ## Cài trên Windows (1 click)
 
 1. Tải mã nguồn: nút **Code → Download ZIP** trên GitHub (hoặc file `pdf_translate-windows.zip` ở mục
@@ -69,7 +94,7 @@ python -m venv .venv
 source .venv/bin/activate            # Windows: .venv\Scripts\activate
 
 pip install -r requirements.txt -r requirements-ml.txt
-# torch chỉ cần một lần để chuyển mô hình sang CTranslate2 int8 (nhanh hơn ~3-4 lần trên CPU)
+# torch chỉ cần một lần để chuyển mô hình sang CTranslate2 int8 (nhanh gấp 3 lần trên CPU, xem mục Kết quả đo)
 pip install torch --index-url https://download.pytorch.org/whl/cpu
 python scripts/convert_ct2.py vinai
 

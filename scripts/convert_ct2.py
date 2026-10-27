@@ -1,4 +1,4 @@
-"""Chuyển mô hình dịch sang CTranslate2 int8 (nhanh hơn ~3-4 lần trên CPU, không cần torch khi dịch).
+"""Chuyển mô hình dịch sang CTranslate2 int8 (nhanh gấp ~3 lần trên CPU, không cần torch khi dịch).
 
     python scripts/convert_ct2.py            # mặc định: vinai
     python scripts/convert_ct2.py vinai opus

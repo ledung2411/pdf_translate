@@ -37,7 +37,6 @@ jobs:
       - name: Tải tập thử FLORES-200 devtest và bài báo mẫu
         run: |
           curl -sSL -o flores.tar.gz https://dl.fbaipublicfiles.com/nllb/flores200_dataset.tar.gz
-          tar tzf flores.tar.gz | head -5
           mkdir flores && tar xzf flores.tar.gz -C flores --wildcards '*eng_Latn.devtest' '*vie_Latn.devtest'
           cp "$(find flores -name 'eng_Latn.devtest')" eng.devtest
           cp "$(find flores -name 'vie_Latn.devtest')" vie.devtest

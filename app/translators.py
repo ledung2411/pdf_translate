@@ -110,7 +110,7 @@ def _has_module(name: str) -> tuple[bool, str]:
 class HFSeq2SeqTranslator(Translator):
     """Mô hình dịch máy Hugging Face, chạy bằng một trong hai backend:
 
-    - ``ct2``: CTranslate2 int8 — nhanh hơn ~3-4 lần trên CPU, ít RAM, KHÔNG cần torch.
+    - ``ct2``: CTranslate2 int8 — nhanh gấp ~3 lần trên CPU (đo bằng scripts/benchmark.py), ít RAM, KHÔNG cần torch.
       Lần đầu tự chuyển đổi từ mô hình Hugging Face (cần torch đúng một lần).
     - ``hf`` : transformers + torch (dự phòng khi chưa cài ctranslate2).
     """
