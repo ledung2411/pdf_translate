@@ -184,6 +184,14 @@ def test_stubborn_refusal_falls_back_to_translated_evidence():
     assert fb and all("- Câu đã dịch Bảng 1" in a.text and "表" not in a.text for a in fb)
 
 
+def test_english_or_chinese_llm_output_is_rejected():
+    from app.insight import has_cjk_run, is_mostly_english, strip_cjk
+
+    assert is_mostly_english("- quality also drops off with too many heads. - our model achieves 28.4 BLEU on the task")
+    assert not is_mostly_english("- Transformer đạt 28.4 BLEU trên WMT 2014, nhanh hơn RNN (https://github.com/x/y).")
+    assert has_cjk_run("một hiệu ứng mà chúng tôi đối抗通过多头注意力") and strip_cjk("trong 表 3") == "trong Bảng  3"
+
+
 def test_clean_rewrite_strips_leaked_labels():
     assert clean_rewrite('Đoạn trích thuộc mục "3.2 Attention" của một bài báo nói về X. Cơ chế chú ý.') \
         == "Cơ chế chú ý."

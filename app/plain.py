@@ -13,7 +13,7 @@ import re
 from functools import lru_cache
 from pathlib import Path
 
-from .insight import Section, split_sections, with_latex
+from .insight import Section, has_cjk_run, is_mostly_english, split_sections, strip_cjk, with_latex
 from .ir import Document, Region
 from .mathtex import find_math
 from .pipeline import MATH_END, MATH_START, SUP_END, SUP_START
@@ -164,8 +164,9 @@ def make_plain(ir: Document, llm=None, status=None) -> str:
                 vi = "\n\n".join(p[1] for p in chunk)
                 try:
                     text = clean_rewrite(llm._chat(PLAIN_SYSTEM, plain_prompt(s.title, en, vi), max_tokens=1500))
-                    if not text:
-                        raise ValueError("LLM trả về rỗng")
+                    if not text or has_cjk_run(text) or is_mostly_english(text):
+                        raise ValueError("LLM trả về rỗng / lẫn chữ Hán / tiếng Anh")
+                    text = strip_cjk(text)
                 except Exception as e:  # noqa: BLE001  (LLM lỗi → giữ bản dịch kèm giải thích)
                     log.warning("LLM lỗi khi viết bản dễ hiểu: %s", e)
                     text, added = explain_terms(vi, used)
