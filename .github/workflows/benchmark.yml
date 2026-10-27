@@ -1,0 +1,61 @@
+# Đo chất lượng (BLEU/chrF trên FLORES-200) và tốc độ (giây/trang, tăng tốc int8) trên CPU.
+name: Benchmark
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - scripts/benchmark.py
+      - .github/workflows/benchmark.yml
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      PYTHONUTF8: "1"
+      PDFTR_DATA_DIR: ${{ github.workspace }}/bench-data
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cài thư viện (torch CPU để đo fp32 và chuyển đổi int8)
+        run: |
+          pip install -r requirements.txt -r requirements-ml.txt sacrebleu
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/huggingface
+            bench-data/models
+          key: bench-models-v1
+
+      - name: Tải tập thử FLORES-200 devtest và bài báo mẫu
+        run: |
+          curl -sSL -o flores.tar.gz https://dl.fbaipublicfiles.com/nllb/flores200_dataset.tar.gz
+          tar xzf flores.tar.gz flores200_dataset/devtest/eng_Latn.devtest flores200_dataset/devtest/vie_Latn.devtest
+          wc -l flores200_dataset/devtest/*.devtest
+          curl -sSL -o attention.pdf https://arxiv.org/pdf/1706.03762v7
+
+      - name: Tải mô hình và chuyển sang CTranslate2 int8 (không tính giờ)
+        run: python scripts/convert_ct2.py vinai
+
+      - name: Đo
+        run: |
+          python scripts/benchmark.py --engine vinai \
+            --src flores200_dataset/devtest/eng_Latn.devtest \
+            --ref flores200_dataset/devtest/vie_Latn.devtest \
+            --speed-n 100 --pdf attention.pdf --json benchmark.json | tee bench.log
+          sed -n '/^### /,$p' bench.log >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: benchmark
+          path: |
+            benchmark.json
+            benchmark.hyp.txt
